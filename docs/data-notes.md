@@ -54,3 +54,26 @@ The whole window is GMT, so UK local time equals UTC. All timestamps are stored 
 PYTHONPATH=backend python -m windsight.snapshot --fetch     # re-download and rewrite data/
 PYTHONPATH=backend python -m windsight.snapshot --summary   # print these numbers from the files
 ```
+
+## First accuracy results (Phase 2 API, real snapshot)
+
+From `/api/metrics` and `/api/series`. Error = forecast − actual.
+
+**By realised lead time** (every January run; 4 h buckets, about 990 points each):
+
+| Lead | MAE (MW) | RMSE | Bias | P90 abs. error | nMAE |
+|---|---|---|---|---|---|
+| 0–4 h | 1,758 | 2,226 | +1,536 | 3,674 | 15.3% |
+| 20–24 h | 1,944 | 2,421 | +1,774 | 3,849 | 17.3% |
+| 24–28 h | 1,948 | 2,413 | +1,730 | 3,844 | 17.4% |
+| 44–48 h | 2,292 | 2,866 | +1,861 | 4,582 | 20.7% |
+
+**At a fixed horizon** (744 January decisions each): h = 1 h → MAE 1,794 MW; h = 24 h → MAE 1,932 MW, bias +1,736 MW, P90 3,850 MW; h = 43 h → MAE 2,188 MW.
+
+**Worst UK hours at 24 h:** 02:00–05:00, about 2.4 GW MAE. **Worst delivery days:** 11 Jan (5.0 GW), 12 Jan (4.3 GW), 21 Jan (3.8 GW).
+
+### What stands out
+
+- Error grows with lead time, as expected, but only moderately: MAE rises about 30% from 0–4 h to 44–48 h.
+- **Bias dominates.** Forecasts sit about 1.5–1.9 GW above metered output even 0–4 h ahead, where weather uncertainty is smallest. Most of the MAE is this constant offset, not random error.
+- **Hypothesis (not verified):** WINDFOR may forecast available or unconstrained wind, while FUELHH reports metered output after curtailment. The bias would then be largely curtailed wind. Curtailment is highest overnight, when demand is low, which matches the 02:00–05:00 peak. If true, a buyer should correct the forecast down by the typical bias before sizing purchases. Check this against Elexon's WINDFOR dataset definition before stating it as fact in the pitch.

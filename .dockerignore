@@ -1,0 +1,13 @@
+.git
+.venv
+.pytest_cache
+**/__pycache__
+.vercel
+.env*
+web/node_modules
+web/dist
+docs
+data/*.tmp
+coverage.xml
+.coverage
+web/coverage/

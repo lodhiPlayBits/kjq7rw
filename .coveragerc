@@ -1,0 +1,7 @@
+[run]
+source = backend/windsight
+relative_files = True
+
+[report]
+show_missing = True
+fail_under = 85
