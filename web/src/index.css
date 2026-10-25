@@ -1,0 +1,50 @@
+:root {
+  --bg: #f4f6fa;
+  --surface: #ffffff;
+  --border: #e2e7ee;
+  --ink: #0f1b2d;
+  --muted: #5b6b80;
+  --over: #e5484d;
+
+  font-family: Inter, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  color: var(--ink);
+  background-color: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+}
+
+.shell {
+  max-width: 1376px;
+  margin: 0 auto;
+  padding: 24px 32px;
+}
+
+h1 {
+  margin: 0 0 4px;
+  font-size: 24px;
+  line-height: 32px;
+}
+
+.muted {
+  margin: 0 0 24px;
+  color: var(--muted);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.card p {
+  margin: 0;
+}
+
+.error {
+  color: var(--over);
+}
