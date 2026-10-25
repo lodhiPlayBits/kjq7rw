@@ -50,7 +50,7 @@ npm --prefix web run coverage     # frontend, gates the logic modules (vite.conf
 |---|---|---|
 | `test (backend)` | pytest with coverage; XML + HTML report uploaded, summary on the run page | a test fails or line coverage < 85% |
 | `test (frontend)` | ESLint, `tsc`, vitest with v8 coverage (lcov + HTML uploaded), production build | lint/type/test/build error, or the logic modules fall below their coverage thresholds |
-| `scan (filesystem)` | Trivy: dependency vulnerabilities (pip + npm lockfiles), secrets, Dockerfile misconfiguration | a fixable CRITICAL vulnerability |
+| `scan (filesystem)` | Trivy: dependency vulnerabilities (pinned `requirements*.txt` and the npm lockfile; transitive Python packages are covered by the image scan), secrets, Dockerfile misconfiguration | a fixable CRITICAL vulnerability |
 | `build + scan (docker)` | builds the image, smoke-tests `/api/health` and `/`, Trivy image scan (OS + Python packages) | the smoke test fails or a fixable CRITICAL vulnerability |
 | `sonar` | SonarCloud analysis with both coverage reports | the `SONAR_TOKEN` secret is missing or the scan errors |
 | `ci-passed` | single status to require in branch protection | any job above did not succeed |
