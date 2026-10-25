@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calendarWeeks, growth, heatColour, isDayAheadBucket, worst } from './accuracy'
+import { calendarWeeks, consistentBias, divergingColour, growth, heatColour, isDayAheadBucket, relativeWording, signedPct, weightedMean, worst, zeroBasedTicks } from './accuracy'
 import type { MetricsGroup } from './api'
 
 const group = (key: number | string, mae: number, bias = 0): MetricsGroup => ({
@@ -60,5 +60,58 @@ describe('worst and growth', () => {
   it('compares the last bucket with the first', () => {
     expect(growth([group(0, 1000), group(1, 1100), group(2, 1300)])).toBeCloseTo(1.3)
     expect(growth([group(0, 1000)])).toBeNull()
+  })
+})
+
+describe('isDayAheadBucket with other bucket sizes', () => {
+  it('excludes buckets that only partly overlap 20–28 h', () => {
+    // 3 h buckets: 18–21 and 27–30 only partly overlap; 21–24 and 24–27 lie inside.
+    expect([...Array(16).keys()].filter((k) => isDayAheadBucket(k, 3))).toEqual([7, 8])
+    expect([...Array(8).keys()].filter((k) => isDayAheadBucket(k, 6))).toEqual([])
+  })
+})
+
+describe('zeroBasedTicks', () => {
+  it('includes zero when all values are positive or all negative', () => {
+    expect(zeroBasedTicks([1200, 1800], 500)).toEqual([0, 500, 1000, 1500, 2000])
+    expect(zeroBasedTicks([-1200, -300], 500)).toEqual([-1500, -1000, -500, 0, 500])
+    expect(zeroBasedTicks([-300, 700], 500)).toEqual([-500, 0, 500, 1000])
+  })
+})
+
+describe('weightedMean', () => {
+  it('weights by sample count', () => {
+    expect(weightedMean([{ ...group(0, 1000), n: 3 }, { ...group(1, 2000), n: 1 }], 'mae')).toBe(1250)
+    expect(weightedMean([], 'mae')).toBeNull()
+  })
+})
+
+describe('consistentBias', () => {
+  const leads = (...biases: number[]) => biases.map((b, i) => group(i, 1000, b))
+
+  it('reports a lean only when every bucket shares the sign of the overall bias', () => {
+    expect(consistentBias(1700, leads(1500, 1800))).toBe('high')
+    expect(consistentBias(-400, leads(-100, -900))).toBe('low')
+    expect(consistentBias(300, leads(-200, 500))).toBeNull()
+    expect(consistentBias(0, leads(100))).toBeNull()
+    expect(consistentBias(100, [])).toBeNull()
+  })
+})
+
+describe('wording helpers', () => {
+  it('words relative change by direction and signs percentages', () => {
+    expect(relativeWording(1758, 1946)).toBe('9.7% lower')
+    expect(relativeWording(1050, 1000)).toBe('5.0% higher')
+    expect(relativeWording(1, 0)).toBeNull()
+    expect(signedPct(0.303)).toBe('+30.3%')
+    expect(signedPct(-0.03)).toBe('−3.0%')
+  })
+})
+
+describe('divergingColour', () => {
+  it('is blue below zero, red above and neutral at zero', () => {
+    expect(divergingColour(-10, 10)).toBe('rgb(62, 123, 250)')
+    expect(divergingColour(10, 10)).toBe('rgb(229, 72, 77)')
+    expect(divergingColour(0, 10)).toBe('rgb(244, 246, 250)')
   })
 })

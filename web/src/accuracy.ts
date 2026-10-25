@@ -1,5 +1,19 @@
 import type { Metrics, MetricsGroup } from './api'
 
+const MINUS = '−'
+
+/** "12.3% lower" / "4.0% higher" for value relative to reference. */
+export function relativeWording(value: number, reference: number): string | null {
+  if (!reference) return null
+  const change = value / reference - 1
+  return `${(Math.abs(change) * 100).toFixed(1)}% ${change <= 0 ? 'lower' : 'higher'}`
+}
+
+/** Signed percentage, e.g. "+30.3%" or "−3.0%". */
+export function signedPct(fraction: number): string {
+  return `${fraction >= 0 ? '+' : MINUS}${(Math.abs(fraction) * 100).toFixed(1)}%`
+}
+
 export type MetricKey = 'mae' | 'rmse' | 'bias' | 'p90'
 
 export const METRICS: { key: MetricKey; label: string; help: string }[] = [
@@ -37,6 +51,40 @@ export function calendarWeeks(groups: MetricsGroup[]): (CalendarCell | null)[][]
   const weeks = []
   for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7))
   return weeks
+}
+
+/** Axis ticks that always include 0, so bars start at zero even when every value has the same sign. */
+export function zeroBasedTicks(values: number[], step: number): number[] {
+  const lo = Math.min(0, Math.floor(Math.min(0, ...values) / step) * step)
+  const hi = Math.max(step, Math.ceil(Math.max(0, ...values) / step) * step)
+  const ticks = []
+  for (let v = lo; v <= hi; v += step) ticks.push(v)
+  return ticks
+}
+
+/** Mean of a metric over groups, weighted by sample count (pooled MAE/bias for the combined rows). */
+export function weightedMean(groups: Metrics[], metric: MetricKey): number | null {
+  const n = groups.reduce((s, g) => s + g.n, 0)
+  return n ? groups.reduce((s, g) => s + g[metric] * g.n, 0) / n : null
+}
+
+/**
+ * Direction of a systematic bias: 'high' / 'low' only when the bias at the chosen horizon and in
+ * every lead bucket has the same non-zero sign; otherwise null (no consistent lean to report).
+ */
+export function consistentBias(overallBias: number, leadGroups: Metrics[]): 'high' | 'low' | null {
+  const sign = Math.sign(overallBias)
+  if (sign === 0 || leadGroups.length === 0) return null
+  return leadGroups.every((g) => Math.sign(g.bias) === sign) ? (sign > 0 ? 'high' : 'low') : null
+}
+
+/** Diverging colour for signed values: blue below zero, white-ish at zero, red above. */
+export function divergingColour(value: number, maxAbs: number): string {
+  const t = maxAbs > 0 ? Math.min(1, Math.abs(value) / maxAbs) : 0
+  const mid = [244, 246, 250]
+  const end = value < 0 ? [62, 123, 250] : [229, 72, 77]
+  const c = mid.map((v, i) => Math.round(v + (end[i] - v) * t))
+  return `rgb(${c[0]}, ${c[1]}, ${c[2]})`
 }
 
 /** Colour from pale teal (low error) to red (high) on a 0..1 scale. */

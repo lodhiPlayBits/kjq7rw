@@ -14,8 +14,22 @@ import {
 } from 'recharts'
 import type { UpdateState } from '../App'
 import { type Meta, type MetricsGroup, fetchMetrics } from '../api'
-import { METRICS, type MetricKey, calendarWeeks, growth, heatColour, isDayAheadBucket, worst } from '../accuracy'
-import { fmtDay, fmtGW, fmtMW, fmtNumber, fmtPct, fmtSignedMW, roundTicks } from '../format'
+import {
+  METRICS,
+  type MetricKey,
+  calendarWeeks,
+  consistentBias,
+  divergingColour,
+  growth,
+  heatColour,
+  isDayAheadBucket,
+  relativeWording,
+  signedPct,
+  weightedMean,
+  worst,
+  zeroBasedTicks,
+} from '../accuracy'
+import { fmtDay, fmtGW, fmtMW, fmtNumber, fmtPct, fmtSignedMW } from '../format'
 import { useApi } from '../useApi'
 import type { ViewState } from '../url'
 import { KpiCard } from './KpiCard'
@@ -32,7 +46,7 @@ const axisTick = { fontSize: 12, fill: COLORS.muted }
 
 const fmtMetric = (metric: MetricKey, v: number) => (metric === 'bias' ? fmtSignedMW(v) : fmtMW(v))
 
-function MetricTooltip({ active, payload, metric }: { active?: boolean; payload?: { payload: MetricsGroup }[]; metric: MetricKey }) {
+function MetricTooltip({ active, payload, metric, countLabel }: { active?: boolean; payload?: { payload: MetricsGroup }[]; metric: MetricKey; countLabel: string }) {
   const g = payload?.[0]?.payload
   if (!active || !g) return null
   return (
@@ -45,7 +59,7 @@ function MetricTooltip({ active, payload, metric }: { active?: boolean; payload?
         </div>
       ))}
       <div className="tooltip-row">
-        <span>Hours</span>
+        <span>{countLabel}</span>
         <strong>{fmtNumber(g.n)}</strong>
       </div>
     </div>
@@ -54,9 +68,9 @@ function MetricTooltip({ active, payload, metric }: { active?: boolean; payload?
 
 function Segmented<T extends string | number>({ label, options, value, onChange, format }: { label: string; options: T[]; value: T; onChange: (v: T) => void; format: (v: T) => string }) {
   return (
-    <div className="segmented" role="radiogroup" aria-label={label}>
+    <div className="segmented" role="group" aria-label={label}>
       {options.map((o) => (
-        <button key={o} type="button" role="radio" aria-checked={o === value} className={o === value ? 'seg selected' : 'seg'} onClick={() => onChange(o)}>
+        <button key={o} type="button" aria-pressed={o === value} className={o === value ? 'seg selected' : 'seg'} onClick={() => onChange(o)}>
           {format(o)}
         </button>
       ))}
@@ -75,6 +89,9 @@ export function AccuracyView({ meta, state, onChange }: Props) {
   const hourData = hour.kind === 'ready' ? hour.data : null
   const dayGroups = day.kind === 'ready' ? day.data.groups : []
   const overall = hourData?.overall ?? null
+  // Label with the horizon the data was computed for, not the one just requested.
+  const hourH = hourData?.horizon_h ?? h
+  const dayH = day.kind === 'ready' ? day.data.horizon_h ?? h : h
   const stale = (hour.kind === 'ready' && hour.stale) || (day.kind === 'ready' && day.stale)
   const failed = [lead, hour, day].find((s) => s.kind === 'error')
 
@@ -82,18 +99,23 @@ export function AccuracyView({ meta, state, onChange }: Props) {
   const first = leadGroups[0]
   const last = leadGroups[leadGroups.length - 1]
   const dayAhead = leadGroups.filter((g) => isDayAheadBucket(Number(g.key), meta.lead_bucket_hours))
+  const dayAheadMae = weightedMean(dayAhead, 'mae')
   const leadGrowth = growth(leadGroups)
+  const lean = overall ? consistentBias(overall.bias, leadGroups) : null
   const worstDay = worst(dayGroups)[0]
   const worstHours = worst(hourData?.groups ?? [], 'mae', 4)
   const worstHourKeys = new Set(worstHours.map((g) => g.key))
   const worstHourLabels = [...worstHours].sort((a, b) => Number(a.key) - Number(b.key)).map((g) => g.label).join(', ')
-  const dayValues = dayGroups.map((g) => Math.abs(g[metric]))
+  // Bias keeps its sign on a diverging scale (blue = wind beat the forecast, red = fell short).
+  const dayValues = dayGroups.map((g) => g[metric])
   const heatMin = Math.min(...dayValues)
   const heatMax = Math.max(...dayValues)
+  const heatAbs = Math.max(...dayValues.map(Math.abs))
+  const cellColour = (v: number) => (metric === 'bias' ? divergingColour(v, heatAbs) : heatColour(v, heatMin, heatMax))
   const horizonChoices = [...new Set([...HORIZON_CHOICES.filter((c) => c <= meta.hmax), meta.hmax, h])].sort((a, b) => a - b)
 
-  const leadTicks = roundTicks(Math.max(0, ...leadGroups.map((g) => Math.max(Math.abs(g[metric]), metric === 'p90' ? 0 : g.p90))), 1000)
-  const hourTicks = roundTicks(Math.max(0, ...(hourData?.groups ?? []).map((g) => Math.abs(g[metric]))), 500)
+  const leadTicks = zeroBasedTicks(leadGroups.flatMap((g) => (metric === 'p90' ? [g.p90] : [g[metric], g.p90])), 1000)
+  const hourTicks = zeroBasedTicks((hourData?.groups ?? []).map((g) => g[metric]), 500)
 
   return (
     <>
@@ -125,22 +147,22 @@ export function AccuracyView({ meta, state, onChange }: Props) {
 
       <section className={stale ? 'kpi-row stale' : 'kpi-row'} aria-label="Headline metrics" aria-busy={stale}>
         <KpiCard
-          label={`Error at ${h} h ahead (MAE)`}
+          label={`Error at ${hourH} h ahead (MAE)`}
           value={overall ? fmtMW(overall.mae) : '–'}
           caption={overall ? `${overall.nmae != null ? fmtPct(overall.nmae) + ' nMAE · ' : ''}bias ${fmtSignedMW(overall.bias)}` : ' '}
         />
         <KpiCard
           label={`Short-range error (${first?.label ?? '0–4 h'})`}
           value={first ? fmtMW(first.mae) : '–'}
-          caption={first && dayAhead.length ? `${fmtPct(1 - first.mae / (dayAhead.reduce((s, g) => s + g.mae, 0) / dayAhead.length))} lower than day-ahead (20–28 h)` : ' '}
+          caption={first && dayAheadMae ? `${relativeWording(first.mae, dayAheadMae)} than day-ahead (20–28 h)` : ' '}
           tone="good"
         />
         <KpiCard
           label={`Long-range error (${last?.label ?? '44–48 h'})`}
           value={last ? fmtMW(last.mae) : '–'}
-          caption={leadGrowth ? `+${fmtPct(leadGrowth - 1)} vs ${first.label}` : ' '}
+          caption={leadGrowth ? `${signedPct(leadGrowth - 1)} vs ${first.label}` : ' '}
         />
-        <KpiCard label={`Worst delivery day (${h} h)`} value={worstDay ? fmtDay(String(worstDay.key)) : '–'} caption={worstDay ? `MAE ${fmtMW(worstDay.mae)}` : ' '} tone="over" />
+        <KpiCard label={`Worst delivery day (${dayH} h)`} value={worstDay ? fmtDay(String(worstDay.key)) : '–'} caption={worstDay ? `MAE ${fmtMW(worstDay.mae)}` : ' '} tone="over" />
       </section>
 
       <section className="card chart-card" aria-label="Error by lead time">
@@ -164,8 +186,8 @@ export function AccuracyView({ meta, state, onChange }: Props) {
               <ReferenceArea x1={dayAhead[0].label} x2={dayAhead[dayAhead.length - 1].label} fill={COLORS.primary} fillOpacity={0.07} label={{ value: 'DAY-AHEAD DECISION WINDOW', position: 'insideTop', fontSize: 11, fill: COLORS.primary }} />
             )}
             <XAxis dataKey="label" tick={axisTick} tickLine={false} axisLine={{ stroke: COLORS.grid }} />
-            <YAxis domain={metric === 'bias' ? ['auto', 'auto'] : [0, leadTicks[leadTicks.length - 1]]} ticks={metric === 'bias' ? undefined : leadTicks} tickFormatter={fmtGW} width={52} tick={axisTick} axisLine={false} tickLine={false} />
-            <Tooltip content={<MetricTooltip metric={metric} />} cursor={{ fill: 'rgba(15,27,45,0.04)' }} />
+            <YAxis domain={[leadTicks[0], leadTicks[leadTicks.length - 1]]} ticks={leadTicks} tickFormatter={fmtGW} width={52} tick={axisTick} axisLine={false} tickLine={false} />
+            <Tooltip content={<MetricTooltip metric={metric} countLabel="Forecast-hours" />} cursor={{ fill: 'rgba(15,27,45,0.04)' }} />
             <Bar dataKey={metric} radius={[4, 4, 0, 0]} isAnimationActive={false}>
               {leadGroups.map((g) => (
                 <Cell key={g.key} fill={COLORS.bar} fillOpacity={isDayAheadBucket(Number(g.key), meta.lead_bucket_hours) ? 1 : 0.55} />
@@ -181,15 +203,15 @@ export function AccuracyView({ meta, state, onChange }: Props) {
           <div>
             <h2>When in the day is the forecast weakest?</h2>
             <p className="caption">
-              {metricInfo.label} by hour of delivery (UK time) · {h} h horizon · red = four worst hours by MAE
+              {metricInfo.label} by hour of delivery (UK time) · {hourH} h horizon · red = four worst hours by MAE
             </p>
           </div>
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={hourData?.groups ?? []} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
               <CartesianGrid stroke={COLORS.grid} vertical={false} />
               <XAxis dataKey="label" tick={axisTick} tickLine={false} interval={2} axisLine={{ stroke: COLORS.grid }} />
-              <YAxis domain={metric === 'bias' ? ['auto', 'auto'] : [0, hourTicks[hourTicks.length - 1]]} ticks={metric === 'bias' ? undefined : hourTicks} tickFormatter={fmtGW} width={52} tick={axisTick} axisLine={false} tickLine={false} />
-              <Tooltip content={<MetricTooltip metric={metric} />} cursor={{ fill: 'rgba(15,27,45,0.04)' }} />
+              <YAxis domain={[hourTicks[0], hourTicks[hourTicks.length - 1]]} ticks={hourTicks} tickFormatter={fmtGW} width={52} tick={axisTick} axisLine={false} tickLine={false} />
+              <Tooltip content={<MetricTooltip metric={metric} countLabel="Hours" />} cursor={{ fill: 'rgba(15,27,45,0.04)' }} />
               <Bar dataKey={metric} radius={[3, 3, 0, 0]} isAnimationActive={false}>
                 {(hourData?.groups ?? []).map((g) => (
                   <Cell key={g.key} fill={worstHourKeys.has(g.key) ? COLORS.over : COLORS.bar} fillOpacity={worstHourKeys.has(g.key) ? 0.85 : 0.55} />
@@ -217,10 +239,14 @@ export function AccuracyView({ meta, state, onChange }: Props) {
           <div>
             <h2>Daily error</h2>
             <p className="caption">
-              {metricInfo.label} per delivery day · {h} h horizon
+              {metricInfo.label} per delivery day · {dayH} h horizon
+              {metric === 'bias' ? ' · red = forecast above actual, blue = below' : ''}
             </p>
           </div>
           <table className="calendar">
+            <caption className="visually-hidden">
+              {metricInfo.label} per delivery day, January 2026, {dayH} h horizon
+            </caption>
             <thead>
               <tr>
                 {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => (
@@ -236,8 +262,9 @@ export function AccuracyView({ meta, state, onChange }: Props) {
                       <td
                         key={j}
                         className={cell.group === worstDay ? 'day worst' : 'day'}
-                        style={{ background: heatColour(Math.abs(cell.group[metric]), heatMin, heatMax) }}
+                        style={{ background: cellColour(cell.group[metric]) }}
                         title={`${fmtDay(cell.date)}: ${metricInfo.label} ${fmtMetric(metric, cell.group[metric])}`}
+                        aria-label={`${fmtDay(cell.date)}: ${metricInfo.label} ${fmtMetric(metric, cell.group[metric])}`}
                       >
                         <span className="day-num">{Number(cell.date.slice(8))}</span>
                         <span className="day-val">{fmtGW(cell.group[metric])}</span>
@@ -252,9 +279,17 @@ export function AccuracyView({ meta, state, onChange }: Props) {
           </table>
           {dayGroups.length > 0 && (
             <div className="scale caption">
-              <span>{fmtGW(heatMin)}</span>
-              <i className="scale-bar" style={{ background: `linear-gradient(to right, ${heatColour(0, 0, 1)}, ${heatColour(1, 0, 1)})` }} />
-              <span>{fmtGW(heatMax)}</span>
+              <span>{fmtGW(metric === 'bias' ? -heatAbs : heatMin)}</span>
+              <i
+                className="scale-bar"
+                style={{
+                  background:
+                    metric === 'bias'
+                      ? `linear-gradient(to right, ${divergingColour(-1, 1)}, ${divergingColour(0, 1)}, ${divergingColour(1, 1)})`
+                      : `linear-gradient(to right, ${heatColour(0, 0, 1)}, ${heatColour(1, 0, 1)})`,
+                }}
+              />
+              <span>{fmtGW(metric === 'bias' ? heatAbs : heatMax)}</span>
             </div>
           )}
         </section>
@@ -268,7 +303,7 @@ export function AccuracyView({ meta, state, onChange }: Props) {
             <thead>
               <tr>
                 <th scope="col">Lead time</th>
-                <th scope="col">Hours</th>
+                <th scope="col">Forecast-hours</th>
                 <th scope="col">MAE</th>
                 <th scope="col">RMSE</th>
                 <th scope="col">Bias</th>
@@ -301,29 +336,31 @@ export function AccuracyView({ meta, state, onChange }: Props) {
           <ol>
             {overall && (
               <li>
-                <strong>Plan for about {fmtGW(overall.mae)} of error at {h} h ahead.</strong>
+                <strong>Plan for about {fmtGW(overall.mae)} of error at {hourH} h ahead.</strong>
                 <span className="caption">9 in 10 hours were within {fmtGW(overall.p90)}. Size the buffer you buy against that, not the average.</span>
               </li>
             )}
-            {first && overall && (
+            {lean && overall && first && (
               <li>
-                <strong>Forecasts lean {overall.bias >= 0 ? 'high' : 'low'}, at every lead time.</strong>
+                <strong>Forecasts lean {lean}, at every lead time.</strong>
                 <span className="caption">
-                  Bias is {fmtSignedMW(overall.bias)} at {h} h and still {fmtSignedMW(first.bias)} only {first.label} ahead, so it is a steady offset rather than
-                  weather uncertainty. {overall.bias > 0 ? 'Wind under-delivered, leaving the desk short more often than long.' : 'Wind over-delivered, so the desk tends to over-buy.'}
+                  Bias is {fmtSignedMW(overall.bias)} at {hourH} h and still {fmtSignedMW(first.bias)} only {first.label} ahead, so it is a steady offset rather than
+                  weather uncertainty.{' '}
+                  {lean === 'high' ? 'On average wind under-delivered, leaving the desk short.' : 'On average wind over-delivered, leaving the desk long.'}
                 </span>
               </li>
             )}
             {worstHours.length > 0 && (
               <li>
                 <strong>Watch {worstHourLabels}.</strong>
-                <span className="caption">The largest misses cluster in these hours at the {h} h horizon.</span>
+                <span className="caption">The largest misses cluster in these hours at the {hourH} h horizon.</span>
               </li>
             )}
           </ol>
           <p className="note">
-            Bias = forecast − actual. Positive means the wind came in below forecast, so you under-procured and must buy back closer to delivery. A likely
-            (unverified) cause of the steady offset is curtailment: actuals are metered output after wind farms are turned down.
+            Bias = forecast − actual. Positive means the wind came in below forecast, so you under-procured and must buy back closer to delivery.
+            {lean === 'high' &&
+              ' A possible (unverified) cause of the steady positive offset is curtailment: actuals are metered output after wind farms are turned down.'}
           </p>
         </section>
       </div>
