@@ -1,42 +1,229 @@
 name: CI
 
 on:
-  push:
-    branches: [main, develop]
   pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
 
 permissions:
   contents: read
 
 jobs:
-  verify:
+  # Stage 1: unit tests with coverage
+  backend:
+    name: test (backend)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.12'
           cache: pip
           cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-dev.txt
+
+      # .coveragerc sets the source and fails the job below 85% line coverage.
+      - name: pytest with coverage
+        run: pytest -q --cov --cov-report=xml:coverage.xml --cov-report=html:htmlcov --cov-report=term
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          if [ -f .coverage ]; then
+            { echo "## Backend coverage (pytest-cov)"; echo; coverage report --format=markdown; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "⚠️ Backend coverage not generated - check the test step" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-backend
+          path: |
+            coverage.xml
+            htmlcov/
+          retention-days: 30
+
+  frontend:
+    name: test (frontend)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: '22'
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: pip install -r requirements-dev.txt
-      - run: npm --prefix web ci
-      # Same script developers run before every commit.
-      - run: bash scripts/verify.sh
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
 
-  docker:
+      # vite.config.ts gates the pure logic modules (url, chartData, accuracy, format, api).
+      - name: vitest with coverage
+        run: npm run coverage
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          if [ -f coverage/coverage-summary.json ]; then
+            node ../scripts/coverage-summary.mjs coverage/coverage-summary.json >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "⚠️ Frontend coverage not generated - check the test step" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - run: npm run build
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-frontend
+          path: web/coverage/
+          retention-days: 30
+
+  # Stage 2: filesystem security scan (dependencies in requirements*.txt and package-lock.json, Dockerfile, secrets)
+  scan:
+    name: scan (filesystem)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker build -t windsight:ci .
+
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '0'
+          format: table
+          output: trivy-fs.txt
+
+      - name: Publish scan summary
+        if: always()
+        run: |
+          {
+            echo "## Trivy filesystem scan"
+            echo '```'
+            if [ -f trivy-fs.txt ]; then cat trivy-fs.txt; else echo "No report generated."; fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Trivy filesystem gate (fail on fixable CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
+
+  # Stage 3: Docker image build, smoke test and image scan (no push: hosting is Vercel)
+  image:
+    name: build + scan (docker)
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t windsight:${{ github.sha }} .
+
       - name: Smoke test the image
         run: |
           set -euo pipefail
-          docker run -d --name ws -p 8000:8000 windsight:ci
-          for i in $(seq 1 30); do curl -sf localhost:8000/api/health && break; sleep 1; done
+          docker run -d --name ws -p 8000:8000 windsight:${{ github.sha }}
+          for _ in $(seq 1 30); do curl -sf localhost:8000/api/health && break; sleep 1; done
           curl -sf localhost:8000/api/health | grep -q '"actuals":1584' || { docker logs ws; exit 1; }
           curl -sf localhost:8000/ | grep -q '<div id="root">' || { docker logs ws; exit 1; }
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: windsight:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '0'
+          format: table
+          output: trivy-image.txt
+
+      - name: Publish image scan summary
+        if: always()
+        run: |
+          {
+            echo "## Trivy image scan"
+            echo '```'
+            if [ -f trivy-image.txt ]; then cat trivy-image.txt; else echo "No report generated."; fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Trivy image gate (fail on fixable CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: windsight:${{ github.sha }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
+
+  # Stage 4: SonarCloud analysis with both coverage reports
+  sonar:
+    name: sonar
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for blame and new-code detection
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-backend
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-frontend
+          path: web/coverage
+
+      # vitest writes lcov paths relative to web/; Sonar resolves them from the repo root.
+      - name: Rebase frontend coverage paths
+        run: sed -i 's#^SF:src/#SF:web/src/#' web/coverage/lcov.info
+
+      - name: Check SonarCloud token
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          test -n "$SONAR_TOKEN" || {
+            echo "SONAR_TOKEN repository secret is missing (create the project on sonarcloud.io, then add the secret)."
+            exit 1
+          }
+
+      - name: SonarCloud scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+        with:
+          args: -Dsonar.qualitygate.wait=false
+
+  # Single required check for branch protection
+  ci-passed:
+    name: ci-passed
+    if: always()
+    needs: [backend, frontend, scan, image, sonar]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all stages passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          for result in $RESULTS; do
+            if [[ "$result" != "success" ]]; then
+              echo "CI failed: a required stage finished with result: $result"
+              exit 1
+            fi
+          done
+          echo "All required CI stages passed."

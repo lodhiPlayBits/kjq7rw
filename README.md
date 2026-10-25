@@ -29,13 +29,35 @@ PYTHONPATH=backend python -m uvicorn windsight.app:app --port 8000   # terminal 
 npm --prefix web run dev                                            # terminal 2 → http://localhost:5173
 ```
 
-**Checks** (run before every commit; CI runs the same script):
+**Checks** (run before every commit):
 
 ```bash
 bash scripts/verify.sh
 ```
 
-It runs the backend tests (pytest), frontend typecheck, frontend tests (vitest) and the production build.
+It runs the backend tests (pytest), frontend lint, typecheck, tests (vitest) and the production build. Coverage locally:
+
+```bash
+pytest --cov                      # backend, fails below 85% (.coveragerc)
+npm --prefix web run coverage     # frontend, gates the logic modules (vite.config.ts)
+```
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on pull requests and pushes to `develop` and `main`. There is no deployment stage; hosting is Vercel.
+
+| Job | What it does | Fails when |
+|---|---|---|
+| `test (backend)` | pytest with coverage; XML + HTML report uploaded, summary on the run page | a test fails or line coverage < 85% |
+| `test (frontend)` | ESLint, `tsc`, vitest with v8 coverage (lcov + HTML uploaded), production build | lint/type/test/build error, or the logic modules fall below their coverage thresholds |
+| `scan (filesystem)` | Trivy: dependency vulnerabilities (pip + npm lockfiles), secrets, Dockerfile misconfiguration | a fixable CRITICAL vulnerability |
+| `build + scan (docker)` | builds the image, smoke-tests `/api/health` and `/`, Trivy image scan (OS + Python packages) | the smoke test fails or a fixable CRITICAL vulnerability |
+| `sonar` | SonarCloud analysis with both coverage reports | the `SONAR_TOKEN` secret is missing or the scan errors |
+| `ci-passed` | single status to require in branch protection | any job above did not succeed |
+
+Current coverage: backend 92% of lines. Frontend logic modules (`url`, `chartData`, `accuracy`, `format`, `api`) 90–100%. The React components have no render tests yet, so the frontend total is about 26%.
+
+**SonarCloud setup (one-off):** import the repository on sonarcloud.io (organization `lodhiplaybits`, project key `lodhiPlayBits_kjq7rw`; edit `sonar-project.properties` if yours differ), turn off "Automatic Analysis" in the project settings, and add the token as the repository secret `SONAR_TOKEN`.
 
 **Refresh the data snapshot** (optional; the app never calls Elexon at runtime):
 
@@ -110,10 +132,12 @@ Elexon BMRS (FUELHH, WINDFOR) ──snapshot.py --fetch──▶ data/*.csv.gz  
 | `web/src/chartData.ts`, `accuracy.ts`, `format.ts` | Pure helpers for chart rows, selection, calendar, colours, wording, formatting |
 | `web/src/api.ts`, `useApi.ts` | Typed API client and a cancel-on-change fetch hook |
 | `web/src/*.test.ts` | vitest unit tests |
-| `scripts/verify.sh` | The full check: pytest, typecheck, vitest, build |
+| `scripts/verify.sh` | The full local check: pytest, lint, typecheck, vitest, build |
+| `.coveragerc`, `sonar-project.properties` | Backend coverage settings; SonarCloud project settings |
+| `scripts/coverage-summary.mjs` | Prints frontend coverage as a table on the CI run page |
 | `Dockerfile`, `docker-compose.yml` | Multi-stage image (Node build → Python runtime, non-root, health check) |
 | `vercel.json`, `.vercelignore` | Vercel build, function bundling and `/api/*` routing |
-| `.github/workflows/ci.yml` | CI: `verify.sh`, plus a Docker build-and-smoke test |
+| `.github/workflows/ci.yml` | CI: tests with coverage, Trivy scans, Docker smoke test, SonarCloud |
 | `docs/roadmap/` | The phased plan, including the objections it was stress-tested against |
 | `docs/data-notes.md` | What the data looks like and the measured accuracy results |
 
@@ -123,7 +147,7 @@ Elexon BMRS (FUELHH, WINDFOR) ──snapshot.py --fetch──▶ data/*.csv.gz  
 - Tests first for the core logic: hand-built timelines for forecast selection (cut-off equality, no forecast yet, January boundaries) and a 4-point metrics example worked out by hand.
 - Every change runs `scripts/verify.sh`; each phase was reviewed by a separate reviewer before commit, and its findings were fixed.
 - Feature branches merged into `develop` by pull request; CI runs on pull requests and on pushes to `main` and `develop`.
-- Pinned dependencies; a Starlette advisory (CVE-2025-62727) found during review was fixed by upgrading.
+- Pinned dependencies, scanned by Trivy. Starlette advisories found in review and by Trivy (CVE-2025-62727, CVE-2026-48818, CVE-2026-54283) were fixed by upgrading to FastAPI 0.140 / Starlette 1.3.1. The image applies Debian security updates on top of the pinned base.
 
 ## Use of AI tools
 

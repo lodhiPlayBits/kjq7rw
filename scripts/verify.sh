@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Full local check, run before every commit: backend tests, frontend typecheck, tests and build.
+# Full local check, run before every commit: backend tests, frontend lint, typecheck, tests and build.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -9,6 +9,8 @@ if [ -x .venv/bin/python ]; then PY=.venv/bin/python; fi
 
 echo "== backend tests"
 PYTHONPATH=backend "$PY" -m pytest -q
+echo "== frontend lint"
+npm --prefix web run lint
 echo "== frontend typecheck"
 npm --prefix web run typecheck
 echo "== frontend tests"

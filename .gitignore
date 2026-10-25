@@ -8,3 +8,7 @@ web/dist/
 .env*
 !.env.example
 data/*.tmp
+coverage.xml
+.coverage
+htmlcov/
+web/coverage/

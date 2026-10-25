@@ -8,3 +8,6 @@ web/node_modules
 web/dist
 docs
 data/*.tmp
+coverage.xml
+.coverage
+web/coverage/
