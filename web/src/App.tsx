@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { fetchMeta } from './api'
+import { AccuracyView } from './components/AccuracyView'
 import { MonitorView } from './components/MonitorView'
 import { TopBar } from './components/TopBar'
 import { useApi } from './useApi'
@@ -51,14 +52,10 @@ export default function App() {
           </div>
         )}
         {meta.kind === 'ready' && state?.view === 'monitor' && <MonitorView meta={meta.data} state={state} onChange={update} />}
-        {meta.kind === 'ready' && state?.view === 'accuracy' && (
-          <div className="card">
-            <h1>Forecast accuracy</h1>
-            <p className="muted">Coming in the next release.</p>
-          </div>
-        )}
+        {meta.kind === 'ready' && state?.view === 'accuracy' && <AccuracyView meta={meta.data} state={state} onChange={update} />}
         <footer className="footer caption">
           <span>Source: Elexon BMRS — FUELHH (fuelType WIND) actuals, WINDFOR national forecasts. UK time (GMT in January).</span>
+          {state?.view === 'accuracy' && <span>MAPE deliberately not used: it explodes at low wind.</span>}
         </footer>
       </main>
     </>
