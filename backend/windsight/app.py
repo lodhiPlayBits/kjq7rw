@@ -6,11 +6,14 @@ All routes live under /api so the same app works behind Vercel's rewrite and loc
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.staticfiles import StaticFiles
 
 from windsight.metrics import error_metrics, grouped_metrics
 from windsight.select import ForecastIndex, delivery_window, lead_points, select_series
@@ -168,3 +171,19 @@ def metrics(
         "groups": [{**rounded(g), "label": labels[g["key"]]} for g in groups],
         "overall": rounded(error_metrics([r["error"] for r in rows], [r["actual"] for r in rows])),
     }
+
+
+def mount_frontend(target: FastAPI, dist: Path) -> bool:
+    """Serve the built React app at / when it exists (Docker image, local `npm run build`).
+
+    On Vercel the static build is served by the platform instead, so web/dist is not bundled
+    into the function and nothing is mounted. Registered last so /api routes take precedence.
+    """
+    if not (dist / "index.html").is_file():
+        return False
+    target.mount("/", StaticFiles(directory=dist, html=True), name="web")
+    return True
+
+
+WEB_DIST = Path(os.environ.get("WINDSIGHT_WEB_DIST", Path(__file__).resolve().parents[2] / "web" / "dist"))
+mount_frontend(app, WEB_DIST)
