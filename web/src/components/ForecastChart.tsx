@@ -19,7 +19,8 @@ interface Props {
   rows: ChartRow[]
   horizon: number
   selected: SeriesPoint | null
-  onSelect: (point: SeriesPoint) => void
+  /** Start time of the hovered hour (hours with a forecast only). */
+  onHover: (startTime: string) => void
 }
 
 const COLORS = { actual: '#0F1B2D', forecast: '#00A3A3', over: '#E5484D', under: '#3E7BFA', grid: '#EDF0F4', muted: '#5B6B80' }
@@ -51,7 +52,7 @@ function TooltipRow({ k, v, tone }: { k: string; v: string; tone?: 'over' | 'und
   )
 }
 
-export function ForecastChart({ rows, horizon, selected, onSelect }: Props) {
+export function ForecastChart({ rows, horizon, selected, onHover }: Props) {
   const ticks = dayTicks(rows)
   const domain: [number, number] = rows.length ? [rows[0].t, rows[rows.length - 1].t] : [0, 1]
   const mwTicks = roundTicks(Math.max(0, ...rows.map((r) => Math.max(r.actual ?? 0, r.forecast ?? 0))), 5000)
@@ -59,7 +60,7 @@ export function ForecastChart({ rows, horizon, selected, onSelect }: Props) {
   const selectedT = selected ? Date.parse(selected.start_time) : null
   const handleMove = (state: { activePayload?: { payload: ChartRow }[] }) => {
     const point = state?.activePayload?.[0]?.payload.point
-    if (point && point.forecast !== null) onSelect(point)
+    if (point && point.forecast !== null) onHover(point.start_time)
   }
 
   return (
@@ -72,6 +73,7 @@ export function ForecastChart({ rows, horizon, selected, onSelect }: Props) {
           <Tooltip content={<TooltipBody />} isAnimationActive={false} />
           <Area dataKey="gap" fill={COLORS.over} fillOpacity={0.12} stroke="none" connectNulls isAnimationActive={false} activeDot={false} />
           <Line dataKey="actual" name="Actual" stroke={COLORS.actual} strokeWidth={2} dot={false} isAnimationActive={false} />
+          {/* connectNulls bridges the half-hour rows between hourly forecasts. Hours with no forecast cannot occur for h <= hmax (backend covered_horizon). */}
           <Line dataKey="forecast" name={`Forecast (${horizon} h)`} stroke={COLORS.forecast} strokeWidth={2} dot={false} connectNulls isAnimationActive={false} />
           {selectedT !== null && <ReferenceLine x={selectedT} stroke={COLORS.actual} strokeDasharray="4 3" />}
         </ComposedChart>

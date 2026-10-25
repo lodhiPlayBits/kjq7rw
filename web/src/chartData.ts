@@ -43,6 +43,15 @@ export function worstPoint(points: SeriesPoint[]): SeriesPoint | null {
   return worst
 }
 
+/**
+ * The point the side panel describes: the hovered hour looked up in the *current* points (so a
+ * horizon change shows the new forecast), else the largest miss.
+ */
+export function resolveSelection(points: SeriesPoint[], hoveredStart: string | null): { point: SeriesPoint | null; hovered: boolean } {
+  const hovered = hoveredStart ? points.find((p) => p.start_time === hoveredStart && p.forecast !== null) : undefined
+  return hovered ? { point: hovered, hovered: true } : { point: worstPoint(points), hovered: false }
+}
+
 /** Midnight ticks (ms) covering the rows, for day labels on the x axis. */
 export function dayTicks(rows: ChartRow[]): number[] {
   if (rows.length === 0) return []

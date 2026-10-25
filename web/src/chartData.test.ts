@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Series, SeriesPoint } from './api'
-import { buildRows, dayTicks, worstPoint } from './chartData'
+import { buildRows, dayTicks, resolveSelection, worstPoint } from './chartData'
 import { fmtGW, fmtSignedMW, fmtWhen, roundTicks, toCsv } from './format'
 
 const point = (start: string, actual: number, forecast: number | null): SeriesPoint => ({
@@ -32,7 +32,7 @@ describe('buildRows', () => {
     expect(rows.map((r) => r.actual)).toEqual([9000, 9100, 9200, 9300])
     expect(rows[0]).toMatchObject({ forecast: 9600, error: 600, gap: [9000, 9600] })
     expect(rows[1]).toMatchObject({ forecast: null, point: null })
-    // 13:00 has a point but no forecast old enough: it stays a gap in the forecast line.
+    // 13:00 has a point but no forecast old enough: the row keeps nulls (no forecast value, no gap band).
     expect(rows[2]).toMatchObject({ forecast: null, error: null, gap: null })
     expect(rows[2].point?.start_time).toBe('2026-01-10T13:00:00Z')
   })
@@ -77,5 +77,21 @@ describe('axis helpers', () => {
     expect(roundTicks(0, 5000)).toEqual([0, 5000])
     expect(fmtGW(-7000)).toBe('−7 GW')
     expect(fmtGW(0)).toBe('0')
+  })
+})
+
+describe('resolveSelection', () => {
+  const at24 = [point('2026-01-15T23:00:00Z', 7258, 8688), point('2026-01-16T00:00:00Z', 7000, 12000)]
+  const at2 = [point('2026-01-15T23:00:00Z', 7258, 8362), point('2026-01-16T00:00:00Z', 7000, 7100)]
+
+  it('looks the hovered hour up in the current points', () => {
+    expect(resolveSelection(at24, '2026-01-15T23:00:00Z')).toEqual({ point: at24[0], hovered: true })
+    // After a horizon change the same hour shows the new forecast, not the stale one.
+    expect(resolveSelection(at2, '2026-01-15T23:00:00Z').point?.forecast).toBe(8362)
+  })
+
+  it('falls back to the largest miss when nothing (valid) is hovered', () => {
+    expect(resolveSelection(at24, null)).toEqual({ point: at24[1], hovered: false })
+    expect(resolveSelection(at24, '2026-01-20T00:00:00Z')).toEqual({ point: at24[1], hovered: false })
   })
 })

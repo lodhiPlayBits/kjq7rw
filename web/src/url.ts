@@ -35,16 +35,42 @@ function validDay(value: string | null): string | null {
 
 const clampDay = (value: string, min: string, max: string) => (value < min ? min : value > max ? max : value)
 
+/**
+ * The single place state is made valid, used for URL input and every UI edit: horizon is an
+ * integer in 0..hmax, days are real dates (else ``fallback``), clamped to the horizon's
+ * delivery window and ordered. With ``outside: 'keep'`` (typed dates) a day outside the window
+ * is ignored rather than clamped, so half-typed years like 0002 don't make the range jump.
+ */
+export function normalize(
+  candidate: ViewState,
+  hmax: number,
+  fallback: ViewState = DEFAULT_STATE,
+  outside: 'clamp' | 'keep' = 'clamp',
+): ViewState {
+  const horizon = Number.isInteger(candidate.horizon) ? Math.min(Math.max(candidate.horizon, 0), hmax) : Math.min(fallback.horizon, hmax)
+  const { min, max } = deliveryDays(horizon)
+  const pick = (value: string, prev: string) => {
+    const valid = validDay(value)
+    return valid && (outside === 'clamp' || (valid >= min && valid <= max)) ? valid : prev
+  }
+  let from = clampDay(pick(candidate.from, fallback.from), min, max)
+  let to = clampDay(pick(candidate.to, fallback.to), min, max)
+  if (from > to) [from, to] = [to, from]
+  return { view: candidate.view === 'accuracy' ? 'accuracy' : 'monitor', from, to, horizon }
+}
+
 export function parseState(search: string, hmax: number): ViewState {
   const q = new URLSearchParams(search)
-  const view: View = q.get('view') === 'accuracy' ? 'accuracy' : 'monitor'
-  const raw = Number(q.get('horizon'))
-  const horizon = q.has('horizon') && Number.isInteger(raw) ? Math.min(Math.max(raw, 0), hmax) : Math.min(DEFAULT_STATE.horizon, hmax)
-  const { min, max } = deliveryDays(horizon)
-  let from = clampDay(validDay(q.get('from')) ?? DEFAULT_STATE.from, min, max)
-  let to = clampDay(validDay(q.get('to')) ?? DEFAULT_STATE.to, min, max)
-  if (from > to) [from, to] = [to, from]
-  return { view, from, to, horizon }
+  const rawHorizon = q.get('horizon') ?? ''
+  return normalize(
+    {
+      view: q.get('view') === 'accuracy' ? 'accuracy' : 'monitor',
+      from: q.get('from') ?? '',
+      to: q.get('to') ?? '',
+      horizon: /^-?\d+$/.test(rawHorizon) ? Number(rawHorizon) : NaN,
+    },
+    hmax,
+  )
 }
 
 export function toSearch(state: ViewState): string {

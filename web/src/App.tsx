@@ -3,30 +3,53 @@ import { fetchMeta } from './api'
 import { MonitorView } from './components/MonitorView'
 import { TopBar } from './components/TopBar'
 import { useApi } from './useApi'
-import { type ViewState, parseState, toSearch } from './url'
+import { type ViewState, normalize, parseState, toSearch } from './url'
+
+export type UpdateState = (patch: Partial<ViewState>, outside?: 'clamp' | 'keep') => void
 
 export default function App() {
   const meta = useApi(fetchMeta, [])
+  const hmax = meta.kind === 'ready' ? meta.data.hmax : null
   const [state, setState] = useState<ViewState | null>(null)
 
   useEffect(() => {
-    if (meta.kind === 'ready') setState(parseState(window.location.search, meta.data.hmax))
-  }, [meta])
+    if (hmax !== null) setState(parseState(window.location.search, hmax))
+  }, [hmax])
 
-  const update = useCallback((patch: Partial<ViewState>) => {
-    setState((prev) => (prev ? { ...prev, ...patch } : prev))
-  }, [])
+  const update = useCallback<UpdateState>(
+    (patch, outside = 'clamp') => {
+      setState((prev) => (prev && hmax !== null ? normalize({ ...prev, ...patch }, hmax, prev, outside) : prev))
+    },
+    [hmax],
+  )
 
   useEffect(() => {
-    if (state) window.history.replaceState(null, '', toSearch(state))
+    if (!state) return
+    // Debounced: browsers throttle (and Firefox/Safari throw on) rapid replaceState calls while dragging.
+    const timer = setTimeout(() => {
+      try {
+        window.history.replaceState(null, '', toSearch(state))
+      } catch {
+        // A dropped URL update only affects sharing; never break the page for it.
+      }
+    }, 250)
+    return () => clearTimeout(timer)
   }, [state])
 
   return (
     <>
       <TopBar view={state?.view ?? 'monitor'} onViewChange={(view) => update({ view })} />
       <main className="shell">
-        {meta.kind === 'loading' && <p className="muted">Loading…</p>}
-        {meta.kind === 'error' && <div className="card error">Could not reach the API: {meta.message}</div>}
+        {meta.kind === 'loading' && (
+          <p className="muted" role="status">
+            Loading…
+          </p>
+        )}
+        {meta.kind === 'error' && (
+          <div className="card error" role="alert">
+            Could not reach the API: {meta.message}
+          </div>
+        )}
         {meta.kind === 'ready' && state?.view === 'monitor' && <MonitorView meta={meta.data} state={state} onChange={update} />}
         {meta.kind === 'ready' && state?.view === 'accuracy' && (
           <div className="card">

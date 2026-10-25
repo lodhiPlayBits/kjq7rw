@@ -1,39 +1,56 @@
 import { type CSSProperties, useMemo, useState } from 'react'
-import { type Meta, type SeriesPoint, fetchSeries } from '../api'
-import { buildRows, worstPoint } from '../chartData'
+import type { UpdateState } from '../App'
+import { type Meta, fetchSeries } from '../api'
+import { buildRows, resolveSelection } from '../chartData'
 import { fmtHours, fmtMW, fmtPct, fmtSignedMW, fmtWhen, toCsv } from '../format'
 import { useApi } from '../useApi'
-import { type ViewState, apiRange, deliveryDays } from '../url'
+import { type ViewState, apiRange, deliveryDays, toSearch } from '../url'
 import { ForecastChart } from './ForecastChart'
 import { KpiCard } from './KpiCard'
 
 interface Props {
   meta: Meta
   state: ViewState
-  onChange: (patch: Partial<ViewState>) => void
+  onChange: UpdateState
+}
+
+function biasCopy(bias: number): { caption: string; tone: 'muted' | 'over' | 'under' } {
+  if (bias > 0) return { caption: 'Wind over-forecast → risk of being short', tone: 'over' }
+  if (bias < 0) return { caption: 'Wind under-forecast → risk of over-buying', tone: 'under' }
+  return { caption: 'No systematic over- or under-forecast', tone: 'muted' }
 }
 
 export function MonitorView({ meta, state, onChange }: Props) {
   const range = apiRange(state)
   const series = useApi((signal) => fetchSeries({ horizon: state.horizon, ...range }, signal), [state.horizon, range.from, range.to])
   const data = series.kind === 'ready' ? series.data : null
+  const stale = series.kind === 'ready' && series.stale
   const rows = useMemo(() => (data ? buildRows(data) : []), [data])
-  const [hovered, setHovered] = useState<SeriesPoint | null>(null)
-  const selected = (hovered && data?.points.some((p) => p.start_time === hovered.start_time) ? hovered : null) ?? (data ? worstPoint(data.points) : null)
+  const [hoveredStart, setHoveredStart] = useState<string | null>(null)
+  const { point: selected, hovered } = resolveSelection(data?.points ?? [], hoveredStart)
+  const [copied, setCopied] = useState(false)
   const days = deliveryDays(state.horizon)
+  const bias = data?.summary ? biasCopy(data.summary.bias) : null
 
-  const setHorizon = (horizon: number) => {
-    const next = deliveryDays(horizon)
-    const clamp = (d: string) => (d < next.min ? next.min : d > next.max ? next.max : d)
-    onChange({ horizon, from: clamp(state.from), to: clamp(state.to) })
+  const copyLink = () => {
+    const link = `${window.location.origin}${window.location.pathname}${toSearch(state)}`
+    navigator.clipboard
+      ?.writeText(link)
+      .then(() => {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1500)
+      })
+      .catch(() => window.prompt('Copy this link', link))
   }
 
   const exportCsv = () => {
     if (!data) return
     const url = URL.createObjectURL(new Blob([toCsv(data.points)], { type: 'text/csv' }))
     const a = Object.assign(document.createElement('a'), { href: url, download: `windsight_${state.from}_${state.to}_h${state.horizon}.csv` })
+    document.body.appendChild(a)
     a.click()
-    URL.revokeObjectURL(url)
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
   return (
@@ -46,8 +63,8 @@ export function MonitorView({ meta, state, onChange }: Props) {
           </p>
         </div>
         <div className="actions">
-          <button type="button" className="btn secondary" onClick={() => navigator.clipboard?.writeText(window.location.href)}>
-            Copy link
+          <button type="button" className="btn secondary" onClick={copyLink} aria-live="polite">
+            {copied ? 'Link copied' : 'Copy link'}
           </button>
           <button type="button" className="btn primary" onClick={exportCsv} disabled={!data}>
             Export CSV
@@ -56,15 +73,15 @@ export function MonitorView({ meta, state, onChange }: Props) {
       </div>
 
       <section className="card controls" aria-label="Controls">
-        <div className="field">
-          <span className="overline">Delivery period</span>
+        <fieldset className="field">
+          <legend className="overline">Delivery period</legend>
           <div className="date-range">
-            <input type="date" aria-label="First delivery day" value={state.from} min={days.min} max={state.to} onChange={(e) => e.target.value && onChange({ from: e.target.value })} />
+            <input type="date" aria-label="First delivery day" value={state.from} min={days.min} max={state.to} onChange={(e) => onChange({ from: e.target.value }, 'keep')} />
             <span aria-hidden="true">→</span>
-            <input type="date" aria-label="Last delivery day" value={state.to} min={state.from} max={days.max} onChange={(e) => e.target.value && onChange({ to: e.target.value })} />
+            <input type="date" aria-label="Last delivery day" value={state.to} min={state.from} max={days.max} onChange={(e) => onChange({ to: e.target.value }, 'keep')} />
           </div>
           <span className="caption">Deliveries whose decision fell in January 2026</span>
-        </div>
+        </fieldset>
         <div className="field horizon">
           <label className="overline" htmlFor="horizon">
             Forecast horizon
@@ -77,7 +94,8 @@ export function MonitorView({ meta, state, onChange }: Props) {
               max={meta.hmax}
               step={1}
               value={state.horizon}
-              onChange={(e) => setHorizon(Number(e.target.value))}
+              aria-valuetext={`${state.horizon} hours ahead`}
+              onChange={(e) => onChange({ horizon: Number(e.target.value) })}
               style={{ '--fill': `${(state.horizon / meta.hmax) * 100}%` } as CSSProperties}
             />
             <span className="value-pill">{state.horizon} h ahead</span>
@@ -91,22 +109,26 @@ export function MonitorView({ meta, state, onChange }: Props) {
         </div>
       </section>
 
-      {series.kind === 'error' && <div className="card error">Could not load forecasts: {series.message}</div>}
+      {series.kind === 'error' && (
+        <div className="card error" role="alert">
+          Could not load forecasts: {series.message}
+        </div>
+      )}
 
-      <section className="kpi-row" aria-label="Headline metrics">
+      <section className={stale ? 'kpi-row stale' : 'kpi-row'} aria-label="Headline metrics" aria-busy={stale}>
         <KpiCard label="Mean absolute error" value={data?.summary ? fmtMW(data.summary.mae) : '–'} caption={data?.summary?.nmae != null ? `${fmtPct(data.summary.nmae)} of mean output (nMAE)` : ' '} />
         <KpiCard label="Root mean square error" value={data?.summary ? fmtMW(data.summary.rmse) : '–'} caption="Weights the big misses more heavily" />
         <KpiCard
           label="Bias (forecast − actual)"
           value={data?.summary ? fmtSignedMW(data.summary.bias) : '–'}
-          caption={!data?.summary ? ' ' : data.summary.bias >= 0 ? 'Wind over-forecast → risk of being short' : 'Wind under-forecast → risk of over-buying'}
-          tone={!data?.summary ? 'muted' : data.summary.bias >= 0 ? 'over' : 'under'}
+          caption={bias?.caption ?? ' '}
+          tone={bias?.tone ?? 'muted'}
         />
         <KpiCard label="P90 absolute error" value={data?.summary ? fmtMW(data.summary.p90) : '–'} caption="9 in 10 hours were within this" />
       </section>
 
       <div className="main-grid">
-        <section className="card chart-card" aria-label="Forecast versus actual chart">
+        <section className={stale ? 'card chart-card stale' : 'card chart-card'} aria-label="Forecast versus actual chart" aria-busy={stale}>
           <div className="chart-header">
             <div>
               <h2>Forecast vs actual · GB wind generation</h2>
@@ -118,7 +140,13 @@ export function MonitorView({ meta, state, onChange }: Props) {
               <span><i className="swatch band" />Gap</span>
             </div>
           </div>
-          {series.kind === 'loading' && !data ? <div className="chart-placeholder">Loading forecasts…</div> : <ForecastChart rows={rows} horizon={state.horizon} selected={selected} onSelect={setHovered} />}
+          {series.kind === 'loading' ? (
+            <div className="chart-placeholder" role="status">
+              Loading forecasts…
+            </div>
+          ) : (
+            <ForecastChart rows={rows} horizon={data?.horizon_h ?? state.horizon} selected={selected} onHover={setHoveredStart} />
+          )}
         </section>
 
         <aside className="side-panel">
