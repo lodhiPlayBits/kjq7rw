@@ -1,37 +1,43 @@
-import { useEffect, useState } from 'react'
-import { fetchHealth, type Health } from './api'
-
-type State = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; health: Health }
+import { useCallback, useEffect, useState } from 'react'
+import { fetchMeta } from './api'
+import { MonitorView } from './components/MonitorView'
+import { TopBar } from './components/TopBar'
+import { useApi } from './useApi'
+import { type ViewState, parseState, toSearch } from './url'
 
 export default function App() {
-  const [state, setState] = useState<State>({ kind: 'loading' })
+  const meta = useApi(fetchMeta, [])
+  const [state, setState] = useState<ViewState | null>(null)
 
   useEffect(() => {
-    const controller = new AbortController()
-    fetchHealth(controller.signal)
-      .then((health) => setState({ kind: 'ready', health }))
-      .catch((err: unknown) => {
-        if (!controller.signal.aborted) {
-          setState({ kind: 'error', message: err instanceof Error ? err.message : String(err) })
-        }
-      })
-    return () => controller.abort()
+    if (meta.kind === 'ready') setState(parseState(window.location.search, meta.data.hmax))
+  }, [meta])
+
+  const update = useCallback((patch: Partial<ViewState>) => {
+    setState((prev) => (prev ? { ...prev, ...patch } : prev))
   }, [])
 
+  useEffect(() => {
+    if (state) window.history.replaceState(null, '', toSearch(state))
+  }, [state])
+
   return (
-    <main className="shell">
-      <h1>WindSight</h1>
-      <p className="muted">GB wind forecast monitor · day-ahead desk · decisions in January 2026</p>
-      <section className="card" aria-live="polite">
-        {state.kind === 'loading' && <p>Loading data snapshot…</p>}
-        {state.kind === 'error' && <p className="error">Could not reach the API: {state.message}</p>}
-        {state.kind === 'ready' && (
-          <p>
-            API {state.health.status}: {state.health.actuals.toLocaleString('en-GB')} actual half-hours and{' '}
-            {state.health.forecasts.toLocaleString('en-GB')} forecast points loaded.
-          </p>
+    <>
+      <TopBar view={state?.view ?? 'monitor'} onViewChange={(view) => update({ view })} />
+      <main className="shell">
+        {meta.kind === 'loading' && <p className="muted">Loading…</p>}
+        {meta.kind === 'error' && <div className="card error">Could not reach the API: {meta.message}</div>}
+        {meta.kind === 'ready' && state?.view === 'monitor' && <MonitorView meta={meta.data} state={state} onChange={update} />}
+        {meta.kind === 'ready' && state?.view === 'accuracy' && (
+          <div className="card">
+            <h1>Forecast accuracy</h1>
+            <p className="muted">Coming in the next release.</p>
+          </div>
         )}
-      </section>
-    </main>
+        <footer className="footer caption">
+          <span>Source: Elexon BMRS — FUELHH (fuelType WIND) actuals, WINDFOR national forecasts. UK time (GMT in January).</span>
+        </footer>
+      </main>
+    </>
   )
 }
