@@ -6,8 +6,7 @@ All routes live under /api so the same app works behind Vercel's rewrite and loc
 
 from __future__ import annotations
 
-import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Annotated, Literal
 
@@ -140,8 +139,17 @@ def lead_label(bucket: int) -> str:
 
 
 @app.get("/api/metrics")
-def metrics(by: Literal["lead", "hour", "day"], horizon_h: Horizon = DEFAULT_HORIZON_H) -> dict:
-    """Error metrics grouped by realised lead time (all January runs), or by UK hour/day at horizon h."""
+def metrics(
+    by: Literal["lead", "hour", "day"],
+    horizon_h: Annotated[int | None, Query(ge=0, le=HMAX, description="Horizon for by=hour/day (default 24)")] = None,
+) -> dict:
+    """Error metrics grouped by realised lead time (all January runs), or by UK hour/day at horizon h.
+
+    ``horizon_h`` is ignored for ``by=lead`` and defaults to 24 otherwise. Each group's ``key`` is the
+    sort key (lead bucket index, hour 0–23, or ISO date); clients should display ``label``.
+    """
+    if by != "lead" and horizon_h is None:
+        horizon_h = DEFAULT_HORIZON_H
     if by == "lead":
         rows = LEAD_ROWS
         groups = grouped_metrics(rows, key=lambda r: int(r["lead_hours"] // LEAD_BUCKET_H))

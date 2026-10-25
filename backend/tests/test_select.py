@@ -122,3 +122,9 @@ def test_lead_points_skip_runs_published_outside_january():
     forecasts = [{"start_time": t("2026-01-01T06:00:00"), "publish_time": t("2025-12-31T22:30:00"), "generation": 5}]
     actuals = [{"start_time": t("2026-01-01T06:00:00"), "publish_time": t("2026-01-01T06:30:00"), "generation": 4}]
     assert lead_points(forecasts, actuals) == []
+
+
+def test_lead_cap_is_exclusive():
+    forecasts = [{"start_time": T, "publish_time": t("2026-01-09T12:00:00"), "generation": 1}]  # lead exactly 24 h
+    assert lead_points(forecasts, ACTUALS, max_lead_hours=24) == []
+    assert len(lead_points(forecasts, ACTUALS, max_lead_hours=24.5)) == 1

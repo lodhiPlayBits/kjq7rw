@@ -42,3 +42,15 @@ def test_grouped_metrics_orders_groups_by_key():
 
     assert [g["key"] for g in groups] == ["a", "b"]
     assert groups[1]["n"] == 2 and groups[1]["mae"] == 20 and groups[1]["bias"] == -10
+
+
+def test_quantiles_for_two_points_and_odd_count():
+    two = error_metrics([10, -30], [100, 100])
+    assert two["p50"] == 20 and two["p90"] == pytest.approx(28)  # 10 + 0.9 * 20
+    assert error_metrics([5, -1, 3], [10, 10, 10])["p50"] == 3
+
+
+def test_lead_bucket_boundary_goes_to_the_upper_bucket():
+    rows = [{"lead": 3.99, "error": 1, "actual": 1}, {"lead": 4.0, "error": 1, "actual": 1}]
+    groups = grouped_metrics(rows, key=lambda r: int(r["lead"] // 4))
+    assert [(g["key"], g["n"]) for g in groups] == [(0, 1), (1, 1)]

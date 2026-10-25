@@ -94,3 +94,37 @@ def test_metrics_by_hour_and_day_partition_the_series_at_h():
 
 def test_metrics_rejects_unknown_grouping():
     assert client.get("/api/metrics", params={"by": "week"}).status_code == 422
+
+
+def test_series_accepts_offsets_and_naive_times_as_utc():
+    offset = client.get("/api/series", params={"from": "2026-01-10T01:00:00+01:00", "to": "2026-01-10T06:00:00"}).json()
+    assert offset["window"] == ["2026-01-10T00:00:00Z", "2026-01-10T06:00:00Z"]
+
+
+def test_metrics_horizon_defaults_to_24_for_hour_and_is_ignored_for_lead():
+    assert client.get("/api/metrics", params={"by": "hour"}).json()["horizon_h"] == 24
+    assert client.get("/api/metrics", params={"by": "lead"}).json()["horizon_h"] is None
+
+
+def test_points_without_a_forecast_are_null_and_excluded_from_summary():
+    from windsight import app as api
+
+    points = [
+        {"start_time": ts("2026-01-10T00:00:00Z"), "decision_time": ts("2026-01-09T00:00:00Z"),
+         "actual": 100, "forecast": None, "publish_time": None, "lead_hours": None, "error": None},
+        {"start_time": ts("2026-01-10T01:00:00Z"), "decision_time": ts("2026-01-09T01:00:00Z"),
+         "actual": 100, "forecast": 150, "publish_time": ts("2026-01-08T22:30:00Z"), "lead_hours": 26.5, "error": 50},
+    ]
+    assert api.point_json(points[0])["publish_time"] is None
+    assert api.summary(points)["n"] == 1 and api.summary(points)["mae"] == 50
+    assert api.summary(points[:1]) is None
+
+
+def test_covered_horizon_stops_at_first_gap():
+    from windsight import app as api
+    from windsight.select import ForecastIndex
+
+    target = ts("2026-01-10T12:00:00Z")
+    index = ForecastIndex([{"start_time": target, "publish_time": ts("2026-01-10T10:00:00Z"), "generation": 1}])
+    actuals = [{"start_time": target, "publish_time": target, "generation": 1}]
+    assert api.covered_horizon(index, actuals) == 2
