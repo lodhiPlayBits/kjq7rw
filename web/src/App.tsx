@@ -1,37 +1,66 @@
-import { useEffect, useState } from 'react'
-import { fetchHealth, type Health } from './api'
+import { useCallback, useEffect, useState } from 'react'
+import { fetchMeta } from './api'
+import { MonitorView } from './components/MonitorView'
+import { TopBar } from './components/TopBar'
+import { useApi } from './useApi'
+import { type ViewState, normalize, parseState, toSearch } from './url'
 
-type State = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; health: Health }
+export type UpdateState = (patch: Partial<ViewState>, outside?: 'clamp' | 'keep') => void
 
 export default function App() {
-  const [state, setState] = useState<State>({ kind: 'loading' })
+  const meta = useApi(fetchMeta, [])
+  const hmax = meta.kind === 'ready' ? meta.data.hmax : null
+  const [state, setState] = useState<ViewState | null>(null)
 
   useEffect(() => {
-    const controller = new AbortController()
-    fetchHealth(controller.signal)
-      .then((health) => setState({ kind: 'ready', health }))
-      .catch((err: unknown) => {
-        if (!controller.signal.aborted) {
-          setState({ kind: 'error', message: err instanceof Error ? err.message : String(err) })
-        }
-      })
-    return () => controller.abort()
-  }, [])
+    if (hmax !== null) setState(parseState(window.location.search, hmax))
+  }, [hmax])
+
+  const update = useCallback<UpdateState>(
+    (patch, outside = 'clamp') => {
+      setState((prev) => (prev && hmax !== null ? normalize({ ...prev, ...patch }, hmax, prev, outside) : prev))
+    },
+    [hmax],
+  )
+
+  useEffect(() => {
+    if (!state) return
+    // Debounced: browsers throttle (and Firefox/Safari throw on) rapid replaceState calls while dragging.
+    const timer = setTimeout(() => {
+      try {
+        window.history.replaceState(null, '', toSearch(state))
+      } catch {
+        // A dropped URL update only affects sharing; never break the page for it.
+      }
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [state])
 
   return (
-    <main className="shell">
-      <h1>WindSight</h1>
-      <p className="muted">GB wind forecast monitor · day-ahead desk · decisions in January 2026</p>
-      <section className="card" aria-live="polite">
-        {state.kind === 'loading' && <p>Loading data snapshot…</p>}
-        {state.kind === 'error' && <p className="error">Could not reach the API: {state.message}</p>}
-        {state.kind === 'ready' && (
-          <p>
-            API {state.health.status}: {state.health.actuals.toLocaleString('en-GB')} actual half-hours and{' '}
-            {state.health.forecasts.toLocaleString('en-GB')} forecast points loaded.
+    <>
+      <TopBar view={state?.view ?? 'monitor'} onViewChange={(view) => update({ view })} />
+      <main className="shell">
+        {meta.kind === 'loading' && (
+          <p className="muted" role="status">
+            Loading…
           </p>
         )}
-      </section>
-    </main>
+        {meta.kind === 'error' && (
+          <div className="card error" role="alert">
+            Could not reach the API: {meta.message}
+          </div>
+        )}
+        {meta.kind === 'ready' && state?.view === 'monitor' && <MonitorView meta={meta.data} state={state} onChange={update} />}
+        {meta.kind === 'ready' && state?.view === 'accuracy' && (
+          <div className="card">
+            <h1>Forecast accuracy</h1>
+            <p className="muted">Coming in the next release.</p>
+          </div>
+        )}
+        <footer className="footer caption">
+          <span>Source: Elexon BMRS — FUELHH (fuelType WIND) actuals, WINDFOR national forecasts. UK time (GMT in January).</span>
+        </footer>
+      </main>
+    </>
   )
 }
