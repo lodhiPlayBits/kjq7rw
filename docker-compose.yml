@@ -1,0 +1,6 @@
+services:
+  windsight:
+    build: .
+    image: windsight:local
+    ports:
+      - "8000:8000"

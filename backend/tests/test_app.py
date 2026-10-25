@@ -128,3 +128,47 @@ def test_covered_horizon_stops_at_first_gap():
     index = ForecastIndex([{"start_time": target, "publish_time": ts("2026-01-10T10:00:00Z"), "generation": 1}])
     actuals = [{"start_time": target, "publish_time": target, "generation": 1}]
     assert api.covered_horizon(index, actuals) == 2
+
+
+def test_frontend_is_served_at_root_when_built_and_api_still_wins(tmp_path):
+    from fastapi import FastAPI
+
+    from windsight import app as api
+
+    (tmp_path / "index.html").write_text("<!doctype html><title>WindSight</title>")
+    target = FastAPI()
+    target.get("/api/ping")(lambda: {"ok": True})
+
+    assert api.mount_frontend(target, tmp_path) is True
+    c = TestClient(target)
+    assert "WindSight" in c.get("/").text
+    assert c.get("/api/ping").json() == {"ok": True}
+
+
+def test_frontend_is_not_mounted_without_a_build(tmp_path):
+    from fastapi import FastAPI
+
+    from windsight import app as api
+
+    assert api.mount_frontend(FastAPI(), tmp_path) is False
+
+
+def test_frontend_mount_is_registered_after_every_api_route():
+    # Starlette matches in order: a route added after Mount("/") would be shadowed by the static files.
+    from starlette.routing import Mount
+
+    routes = app.routes
+    mounts = [i for i, r in enumerate(routes) if isinstance(r, Mount)]
+    if mounts:  # only present when web/dist has been built
+        assert mounts == [len(routes) - 1]
+
+
+def test_static_files_reject_path_traversal(tmp_path):
+    from fastapi import FastAPI
+
+    from windsight import app as api
+
+    (tmp_path / "index.html").write_text("ok")
+    target = FastAPI()
+    api.mount_frontend(target, tmp_path)
+    assert TestClient(target).get("/..%2fapp.py").status_code == 404
