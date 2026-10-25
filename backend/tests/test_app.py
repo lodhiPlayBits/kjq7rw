@@ -1,0 +1,96 @@
+from datetime import datetime, timedelta
+
+from fastapi.testclient import TestClient
+
+from windsight.app import app
+
+client = TestClient(app)
+
+
+def ts(s):
+    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+
+def test_health_reports_snapshot_row_counts():
+    resp = client.get("/api/health")
+
+    assert resp.status_code == 200
+    # Counts from docs/data-notes.md; a missing or truncated snapshot fails here.
+    assert resp.json() == {"status": "ok", "actuals": 1584, "forecasts": 19272}
+
+
+def test_openapi_docs_are_served_under_api():
+    assert client.get("/api/openapi.json").status_code == 200
+    assert client.get("/api/docs").status_code == 200
+
+
+def test_meta_reports_measured_full_coverage_horizon():
+    m = client.get("/api/meta").json()
+    assert m["hmax"] == 43
+    assert m["default_horizon_h"] == 24
+    assert m["decision_window"] == ["2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z"]
+
+
+def test_series_at_24h_only_uses_forecasts_published_24h_before_and_decided_in_january():
+    body = client.get("/api/series", params={"horizon_h": 24}).json()
+    points = body["points"]
+
+    assert len(points) == 31 * 24  # one per hour of the shifted window
+    for p in points:
+        start = ts(p["start_time"])
+        assert ts(p["publish_time"]) <= start - timedelta(hours=24)
+        assert ts("2026-01-01T00:00:00Z") <= ts(p["decision_time"]) < ts("2026-02-01T00:00:00Z")
+        assert p["lead_hours"] >= 24
+        assert p["error"] == p["forecast"] - p["actual"]
+
+
+def test_every_hour_has_a_forecast_up_to_hmax():
+    points = client.get("/api/series", params={"horizon_h": 43}).json()["points"]
+    assert all(p["forecast"] is not None for p in points)
+
+
+def test_series_range_filter_returns_half_hourly_actuals_and_hourly_points():
+    body = client.get(
+        "/api/series", params={"horizon_h": 24, "from": "2026-01-10T00:00:00Z", "to": "2026-01-13T00:00:00Z"}
+    ).json()
+
+    assert body["window"] == ["2026-01-10T00:00:00Z", "2026-01-13T00:00:00Z"]
+    assert len(body["actual"]) == 3 * 48
+    assert len(body["points"]) == 3 * 24
+    assert body["summary"]["n"] == 72
+
+
+def test_series_range_is_clipped_to_the_delivery_window():
+    body = client.get("/api/series", params={"horizon_h": 0, "from": "2025-12-01", "to": "2026-01-02"}).json()
+    assert body["window"] == ["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"]
+
+
+def test_series_rejects_out_of_range_horizon_and_empty_range():
+    assert client.get("/api/series", params={"horizon_h": 44}).status_code == 422
+    assert client.get("/api/series", params={"horizon_h": -1}).status_code == 422
+    assert client.get("/api/series", params={"from": "2026-01-12", "to": "2026-01-10"}).status_code == 422
+
+
+def test_metrics_by_lead_buckets_cover_0_to_48h_and_error_grows_with_lead():
+    body = client.get("/api/metrics", params={"by": "lead"}).json()
+    groups = body["groups"]
+
+    assert [g["label"] for g in groups][:2] == ["0–4 h", "4–8 h"]
+    assert len(groups) == 12
+    assert groups[0]["mae"] < groups[-1]["mae"]
+    assert body["overall"]["n"] == sum(g["n"] for g in groups)
+
+
+def test_metrics_by_hour_and_day_partition_the_series_at_h():
+    hour = client.get("/api/metrics", params={"by": "hour", "horizon_h": 24}).json()
+    day = client.get("/api/metrics", params={"by": "day", "horizon_h": 24}).json()
+    series = client.get("/api/series", params={"horizon_h": 24}).json()
+
+    assert len(hour["groups"]) == 24
+    assert len(day["groups"]) == 31
+    assert hour["overall"] == day["overall"] == series["summary"]
+    assert sum(g["n"] for g in hour["groups"]) == hour["overall"]["n"]
+
+
+def test_metrics_rejects_unknown_grouping():
+    assert client.get("/api/metrics", params={"by": "week"}).status_code == 422
