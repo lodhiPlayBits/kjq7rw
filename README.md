@@ -97,7 +97,6 @@ PYTHONPATH=backend python -m windsight.snapshot --summary   # describe the snaps
 - **Worst hours:** 02:00–05:00. **Worst delivery days:** 11 Jan (5.0 GW MAE), 12 Jan (4.3 GW), 21 Jan (3.8 GW).
 - **Caveat / hypothesis (not verified):** the offset may be wind curtailment. FUELHH is metered output after wind farms are turned down; WINDFOR may forecast unconstrained output. The overnight peak fits, since curtailment is highest at low demand. Check against Elexon's dataset definitions before acting on it.
 
-Full measurements: [`docs/data-notes.md`](docs/data-notes.md).
 
 ## Architecture
 
@@ -224,8 +223,6 @@ flowchart LR
 | `Dockerfile`, `docker-compose.yml` | Multi-stage image (Node build → Python runtime, non-root, health check) |
 | `vercel.json`, `.vercelignore` | Vercel build, function bundling and `/api/*` routing |
 | `.github/workflows/ci.yml` | CI: tests with coverage, Trivy scans, Docker smoke test, SonarCloud |
-| `docs/roadmap/` | The phased plan, including the objections it was stress-tested against |
-| `docs/data-notes.md` | What the data looks like and the measured accuracy results |
 
 ## Development practices
 

@@ -7,7 +7,7 @@
   "functions": {
     "api/index.py": {
       "includeFiles": "{backend/windsight/**,data/*.csv.gz}",
-      "excludeFiles": "{backend/tests/**,web/**,docs/**}"
+      "excludeFiles": "{backend/tests/**,web/**}"
     }
   },
   "rewrites": [{ "source": "/api/(.*)", "destination": "/api/index" }]
