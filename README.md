@@ -39,7 +39,7 @@ It runs the backend tests (pytest), frontend lint, typecheck, tests (vitest) and
 
 ```bash
 pytest --cov                      # backend, fails below 85% (.coveragerc)
-npm --prefix web run coverage     # frontend, gates the logic modules (vite.config.ts)
+npm --prefix web run coverage     # frontend, fails below 90% lines (vite.config.ts)
 ```
 
 ## Continuous integration
@@ -49,13 +49,13 @@ npm --prefix web run coverage     # frontend, gates the logic modules (vite.conf
 | Job | What it does | Fails when |
 |---|---|---|
 | `test (backend)` | pytest with coverage; XML + HTML report uploaded, summary on the run page | a test fails or line coverage < 85% |
-| `test (frontend)` | ESLint, `tsc`, vitest with v8 coverage (lcov + HTML uploaded), production build | lint/type/test/build error, or the logic modules fall below their coverage thresholds |
+| `test (frontend)` | ESLint, `tsc`, vitest with v8 coverage (lcov + HTML uploaded), production build | lint/type/test/build error, or coverage below 90% lines / 85% branches |
 | `scan (filesystem)` | Trivy: dependency vulnerabilities (pinned `requirements*.txt` and the npm lockfile; transitive Python packages are covered by the image scan), secrets, Dockerfile misconfiguration | a fixable CRITICAL vulnerability |
 | `build + scan (docker)` | builds the image, smoke-tests `/api/health` and `/`, Trivy image scan (OS + Python packages) | the smoke test fails or a fixable CRITICAL vulnerability |
 | `sonar` | SonarCloud analysis with both coverage reports | the `SONAR_TOKEN` secret is missing or the scan errors |
 | `ci-passed` | single status to require in branch protection | any job above did not succeed |
 
-Current coverage: backend 92% of lines. Frontend logic modules (`url`, `chartData`, `accuracy`, `format`, `api`) 90–100%. The React components have no render tests yet, so the frontend total is about 26%.
+Current coverage: backend 92% of lines; frontend 99.5% of lines (component tests with Testing Library + jsdom, API mocked).
 
 **SonarCloud setup (one-off):** import the repository on sonarcloud.io (organization `lodhiplaybits`, project key `lodhiPlayBits_kjq7rw`; edit `sonar-project.properties` if yours differ), turn off "Automatic Analysis" in the project settings, and add the token as the repository secret `SONAR_TOKEN`.
 
@@ -131,7 +131,7 @@ Elexon BMRS (FUELHH, WINDFOR) ──snapshot.py --fetch──▶ data/*.csv.gz  
 | `web/src/url.ts` | Page state ⇄ URL (shareable views), with validation and clamping |
 | `web/src/chartData.ts`, `accuracy.ts`, `format.ts` | Pure helpers for chart rows, selection, calendar, colours, wording, formatting |
 | `web/src/api.ts`, `useApi.ts` | Typed API client and a cancel-on-change fetch hook |
-| `web/src/*.test.ts` | vitest unit tests |
+| `web/src/**/*.test.ts(x)`, `web/src/test/` | vitest unit and component tests (Testing Library + jsdom), shared fixtures and setup |
 | `scripts/verify.sh` | The full local check: pytest, lint, typecheck, vitest, build |
 | `.coveragerc`, `sonar-project.properties` | Backend coverage settings; SonarCloud project settings |
 | `scripts/coverage-summary.mjs` | Prints frontend coverage as a table on the CI run page |

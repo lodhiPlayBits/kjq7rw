@@ -62,7 +62,7 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
 
-      # vite.config.ts gates the pure logic modules (url, chartData, accuracy, format, api).
+      # vite.config.ts fails the job below 90% lines / 85% branches across the frontend.
       - name: vitest with coverage
         run: npm run coverage
 

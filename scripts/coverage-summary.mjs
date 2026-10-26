@@ -12,7 +12,5 @@ console.log(
     '| Metric | % | Covered |',
     '|---|---|---|',
     ...['lines', 'statements', 'functions', 'branches'].map(row),
-    '',
-    'React components have no render tests yet, so they count as uncovered; the logic modules are gated.',
   ].join('\n'),
 )

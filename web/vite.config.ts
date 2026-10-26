@@ -17,10 +17,14 @@ export default defineConfig({
       exclude: ['src/**/*.test.{ts,tsx}', 'src/test/**', 'src/main.tsx', 'src/vite-env.d.ts'],
       // lcov for SonarCloud, json-summary for the CI job summary, html as a downloadable artifact.
       reporter: ['text', 'lcov', 'json-summary', 'html'],
-      // Gate the pure logic modules. React components have no render tests yet, so they are
-      // reported but not gated.
+      // Whole frontend must stay covered; the pure logic modules are held to a stricter per-file bar so a
+      // new untested component cannot hide behind the overall average.
       thresholds: {
-        'src/{accuracy,api,chartData,format,url}.ts': { lines: 90, branches: 85, functions: 60, statements: 90 },
+        lines: 90,
+        branches: 85,
+        functions: 90,
+        statements: 90,
+        'src/{accuracy,api,chartData,format,url,useApi}.ts': { lines: 95, branches: 90, functions: 95, statements: 95 },
       },
     },
   },

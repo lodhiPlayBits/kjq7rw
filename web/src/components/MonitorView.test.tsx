@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
 import type { ChartRow } from '../chartData'
 import { META, SERIES, failWith, point, stubApi } from '../test/fixtures'
@@ -10,6 +10,20 @@ import { TooltipBody } from './ForecastChart'
 import { MonitorView } from './MonitorView'
 
 const json = (body: unknown) => () => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))
+
+// Browser APIs these tests define on shared objects; restored after each test so nothing leaks.
+const originals = {
+  clipboard: Object.getOwnPropertyDescriptor(navigator, 'clipboard'),
+  createObjectURL: Object.getOwnPropertyDescriptor(URL, 'createObjectURL'),
+  revokeObjectURL: Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL'),
+}
+afterEach(() => {
+  const restore = (target: object, key: string, d: PropertyDescriptor | undefined) =>
+    d ? Object.defineProperty(target, key, d) : Reflect.deleteProperty(target, key)
+  restore(navigator, 'clipboard', originals.clipboard)
+  restore(URL, 'createObjectURL', originals.createObjectURL)
+  restore(URL, 'revokeObjectURL', originals.revokeObjectURL)
+})
 
 function renderMonitor(onChange = vi.fn()) {
   render(<MonitorView meta={META} state={DEFAULT_STATE} onChange={onChange} />)
@@ -84,17 +98,22 @@ describe('MonitorView', () => {
     await waitFor(() => expect(prompt).toHaveBeenCalledWith('Copy this link', expect.stringContaining('horizon=24')))
   })
 
-  it('exports the points as a CSV download', async () => {
+  it('exports the points as a CSV download and releases the object URL', async () => {
     stubApi()
     const createObjectURL = vi.fn().mockReturnValue('blob:csv')
+    const revokeObjectURL = vi.fn()
     // jsdom does not implement object URLs.
     Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true })
-    Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), configurable: true })
+    Object.defineProperty(URL, 'revokeObjectURL', { value: revokeObjectURL, configurable: true })
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
     renderMonitor()
     await screen.findByText('2,603 MW')
 
-    await userEvent.click(screen.getByRole('button', { name: 'Export CSV' }))
+    vi.useFakeTimers()
+    fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }))
+    vi.advanceTimersByTime(1000)
+    vi.useRealTimers()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:csv')
     const blob = createObjectURL.mock.calls[0][0] as Blob
     const text = await new Promise<string>((resolve) => {
       const reader = new FileReader() // jsdom's Blob has no .text()
@@ -137,16 +156,21 @@ describe('TooltipBody', () => {
 })
 
 describe('App', () => {
-  it('restores state from the URL, renders the monitor and switches to accuracy', async () => {
-    stubApi()
-    window.history.replaceState(null, '', '/?from=2026-01-10&to=2026-01-12&horizon=24')
+  it('restores a non-default view from the URL and keeps the URL in sync when switching', async () => {
+    const fetchMock = stubApi()
+    window.history.replaceState(null, '', '/?view=accuracy&from=2026-01-15&to=2026-01-17&horizon=12')
     render(<App />)
 
-    expect(await screen.findByRole('heading', { name: 'Forecast monitor' })).toBeTruthy()
-    await userEvent.click(screen.getByRole('button', { name: 'Accuracy' }))
     expect(await screen.findByRole('heading', { name: 'Forecast accuracy' })).toBeTruthy()
-    await waitFor(() => expect(window.location.search).toContain('view=accuracy'))
     expect(screen.getByText('MAPE deliberately not used: it explodes at low wind.')).toBeTruthy()
+    await waitFor(() => expect(fetchMock.mock.calls.map((c) => c[0])).toContain('/api/metrics?by=hour&horizon_h=12'))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Monitor' }))
+    expect(await screen.findByRole('heading', { name: 'Forecast monitor' })).toBeTruthy()
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map((c) => c[0])).toContain('/api/series?horizon_h=12&from=2026-01-15T00%3A00%3A00Z&to=2026-01-18T00%3A00%3A00Z'),
+    )
+    await waitFor(() => expect(window.location.search).toBe('?from=2026-01-15&to=2026-01-17&horizon=12'))
   })
 
   it('shows an alert when the API is unreachable', async () => {

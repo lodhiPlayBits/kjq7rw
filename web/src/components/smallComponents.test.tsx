@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
+import { act, render, renderHook, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { hoveredStart } from '../chartData'
@@ -30,38 +30,42 @@ describe('KpiCard', () => {
 })
 
 describe('useApi', () => {
-  it('goes loading → ready, marks data stale while refetching, and ignores aborted requests', async () => {
+  it('goes loading → ready and marks data stale while refetching', async () => {
     const resolvers: ((v: string) => void)[] = []
-    const load = vi.fn((dep: number) => (signal: AbortSignal) => {
-      void signal
-      return new Promise<string>((resolve) => resolvers.push(resolve)).then((v) => `${v}-${dep}`)
-    })
+    const load = (dep: number) => () => new Promise<string>((resolve) => resolvers.push(resolve)).then((v) => `${v}-${dep}`)
     const { result, rerender } = renderHook(({ dep }) => useApi(load(dep), [dep]), { initialProps: { dep: 1 } })
 
     expect(result.current).toEqual({ kind: 'loading' })
-    await act(async () => resolvers[resolvers.length - 1]('a'))
+    await act(async () => resolvers[0]('a'))
     expect(result.current).toEqual({ kind: 'ready', data: 'a-1', stale: false })
 
     rerender({ dep: 2 })
     expect(result.current).toMatchObject({ kind: 'ready', data: 'a-1', stale: true })
-    await act(async () => resolvers[resolvers.length - 1]('b'))
+    await act(async () => resolvers[1]('b'))
     expect(result.current).toEqual({ kind: 'ready', data: 'b-2', stale: false })
   })
 
-  it('reports errors but not errors from cancelled requests', async () => {
-    let reject: (e: unknown) => void = () => {}
-    const { result, unmount } = renderHook(() =>
-      useApi(() => new Promise((_, r) => (reject = r)), []),
-    )
-    await act(async () => reject(new Error('API responded 500')))
-    await waitFor(() => expect(result.current).toEqual({ kind: 'error', message: 'API responded 500' }))
-    unmount()
+  it('discards a late response from a superseded request', async () => {
+    const resolvers: ((v: string) => void)[] = []
+    const load = (dep: number) => () => new Promise<string>((resolve) => resolvers.push(resolve)).then((v) => `${v}-${dep}`)
+    const { result, rerender } = renderHook(({ dep }) => useApi(load(dep), [dep]), { initialProps: { dep: 1 } })
 
-    let rejectLater: (e: unknown) => void = () => {}
-    const second = renderHook(() => useApi(() => new Promise((_, r) => (rejectLater = r)), []))
-    second.unmount()
-    await act(async () => rejectLater('late'))
-    expect(second.result.current).toEqual({ kind: 'loading' })
+    rerender({ dep: 2 }) // aborts request 1 while it is still in flight
+    await act(async () => resolvers[1]('new'))
+    await act(async () => resolvers[0]('old')) // arrives after the newer one
+    expect(result.current).toEqual({ kind: 'ready', data: 'new-2', stale: false })
+  })
+
+  it('reports errors but discards a late error from a superseded request', async () => {
+    const rejecters: ((e: unknown) => void)[] = []
+    const load = () => () => new Promise<string>((_, reject) => rejecters.push(reject))
+    const { result, rerender } = renderHook(({ dep }) => useApi(load(), [dep]), { initialProps: { dep: 1 } })
+
+    rerender({ dep: 2 })
+    await act(async () => rejecters[0](new Error('stale failure')))
+    expect(result.current).toEqual({ kind: 'loading' })
+    await act(async () => rejecters[1](new Error('API responded 500')))
+    expect(result.current).toEqual({ kind: 'error', message: 'API responded 500' })
   })
 
   it('stringifies non-Error rejections', async () => {

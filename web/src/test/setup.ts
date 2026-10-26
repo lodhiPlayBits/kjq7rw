@@ -6,9 +6,11 @@ afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+  if (typeof window !== 'undefined') window.history.replaceState(null, '', '/') // URL state must not leak between tests
 })
 
-// jsdom has no layout engine: recharts' ResponsiveContainer needs ResizeObserver and a measured size.
+// jsdom has no layout engine: recharts' ResponsiveContainer needs ResizeObserver. Charts render at 0×0, so chart
+// internals (axes, bars, mouse handlers) are not exercised here; their logic lives in tested helpers instead.
 if (typeof window !== 'undefined') {
   class ResizeObserverStub {
     observe() {}
