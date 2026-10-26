@@ -101,14 +101,100 @@ Full measurements: [`docs/data-notes.md`](docs/data-notes.md).
 
 ## Architecture
 
+### System overview
+
+```mermaid
+flowchart LR
+    subgraph Source["Elexon BMRS public API"]
+        FUELHH["FUELHH stream<br/>actual generation, half-hourly<br/>(fuelType = WIND)"]
+        WINDFOR["WINDFOR stream<br/>wind forecasts, hourly<br/>8 runs a day"]
+    end
+
+    subgraph Offline["One-off data load (developer machine)"]
+        SNAP["snapshot.py --fetch<br/>7-day chunks · UTC · de-duplicate<br/>completeness check"]
+        DATA[("data/*.csv.gz<br/>committed snapshot, 107 KB")]
+    end
+
+    subgraph Backend["Python backend: FastAPI (backend/windsight)"]
+        LOAD["app.py<br/>loads snapshot once at start-up"]
+        SELECT["select.py<br/>latest forecast with publishTime ≤ T − h"]
+        METRICS["metrics.py<br/>MAE · RMSE · bias · P50/P90 · nMAE"]
+        API["/api/meta · /api/series<br/>/api/metrics · /api/health · /api/docs"]
+    end
+
+    subgraph Frontend["React + TypeScript + Recharts (web/)"]
+        MON["Monitor view<br/>forecast vs actual, horizon slider"]
+        ACC["Accuracy view<br/>error by lead time, hour, day"]
+        URL["url.ts<br/>view state in the URL (shareable)"]
+    end
+
+    USER(["Day-ahead buying desk"])
+
+    FUELHH --> SNAP
+    WINDFOR --> SNAP
+    SNAP --> DATA
+    DATA --> LOAD
+    LOAD --> SELECT
+    SELECT --> METRICS
+    SELECT --> API
+    METRICS --> API
+    API -- JSON --> MON
+    API -- JSON --> ACC
+    URL --- MON
+    URL --- ACC
+    MON --> USER
+    ACC --> USER
 ```
-Elexon BMRS (FUELHH, WINDFOR) ──snapshot.py --fetch──▶ data/*.csv.gz  (committed, 107 KB)
-                                                             │ loaded once at start-up
-                                                             ▼
-              FastAPI (backend/windsight)  /api/meta  /api/series  /api/metrics  /api/health
-                                                             │ JSON
-                                                             ▼
-              React + TypeScript + recharts (web/)   Monitor · Accuracy   (state in the URL)
+
+### What happens when the buyer moves the horizon slider
+
+```mermaid
+sequenceDiagram
+    actor Buyer
+    participant UI as React (MonitorView)
+    participant API as FastAPI /api/series
+    participant SEL as select.py
+    participant MET as metrics.py
+
+    Buyer->>UI: drag horizon slider to h = 24
+    UI->>UI: validate + clamp state, update URL
+    UI->>API: GET /api/series?horizon_h=24&from=…&to=…
+    API->>SEL: for each delivery hour T with decision T − h in January
+    SEL-->>API: latest run published ≤ T − h, error = forecast − actual
+    API->>MET: summarise matched hours
+    MET-->>API: MAE, RMSE, bias, P90, nMAE
+    API-->>UI: points + half-hourly actuals + summary (JSON)
+    UI-->>Buyer: chart, KPI cards, tooltip (publish time, realised lead)
+```
+
+### Build, test and deployment
+
+```mermaid
+flowchart LR
+    DEV["Developer<br/>scripts/verify.sh"] --> GH["GitHub repo<br/>develop / main"]
+
+    subgraph CI["GitHub Actions CI (pull requests + pushes)"]
+        TB["test (backend)<br/>pytest + coverage ≥ 85%"]
+        TF["test (frontend)<br/>lint · tsc · vitest + coverage · build"]
+        SCAN["scan (filesystem)<br/>Trivy: deps, secrets, Dockerfile"]
+        IMG["build + scan (docker)<br/>smoke test · Trivy image"]
+        SQ["sonar<br/>SonarCloud quality + coverage"]
+        OK{{"ci-passed"}}
+        TB --> IMG
+        TF --> IMG
+        TB --> SQ
+        TF --> SQ
+        TB --> OK
+        TF --> OK
+        SCAN --> OK
+        IMG --> OK
+        SQ --> OK
+    end
+
+    GH --> CI
+    GH -- "push to main" --> VERCEL["Vercel<br/>web/dist as static files<br/>api/index.py as Python function"]
+    VERCEL --> LIVE(["kjq7rw.vercel.app"])
+    GH -. "docker compose up" .-> DOCKER["Docker image<br/>React build + API on :8000"]
 ```
 
 - **Snapshot, not live calls:** January 2026 data never changes, so it is downloaded once and committed. The deployed app needs no network access to Elexon and always loads.
