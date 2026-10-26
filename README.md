@@ -2,7 +2,7 @@
 
 WindSight shows a UK day-ahead buying team **the latest national wind forecast they could actually have seen when they had to buy**, next to what the wind really generated, and **how accurate those forecasts were**, so purchase volumes can be sized with the error in mind. Scope: national wind, Elexon BMRS data, purchase decisions made in January 2026.
 
-**Live app:** _added after deployment_ · **API docs:** `/api/docs` on the same host
+**Live app:** https://kjq7rw.vercel.app · **API docs:** https://kjq7rw.vercel.app/api/docs · **Health:** https://kjq7rw.vercel.app/api/health
 
 | Monitor | Accuracy |
 |---|---|
