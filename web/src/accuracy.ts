@@ -41,6 +41,7 @@ export function calendarWeeks(groups: MetricsGroup[]): (CalendarCell | null)[][]
   const DAY = 86_400_000
   const first = Date.parse(`${groups[0].key}T00:00:00Z`)
   const last = Date.parse(`${groups[groups.length - 1].key}T00:00:00Z`)
+  if (Number.isNaN(first) || Number.isNaN(last) || last < first) return [] // keys are not ISO dates
   const lead = (new Date(first).getUTCDay() + 6) % 7 // Monday = 0
   const cells: (CalendarCell | null)[] = Array(lead).fill(null)
   for (let t = first; t <= last; t += DAY) {

@@ -46,7 +46,7 @@ const axisTick = { fontSize: 12, fill: COLORS.muted }
 
 const fmtMetric = (metric: MetricKey, v: number) => (metric === 'bias' ? fmtSignedMW(v) : fmtMW(v))
 
-function MetricTooltip({ active, payload, metric, countLabel }: { active?: boolean; payload?: { payload: MetricsGroup }[]; metric: MetricKey; countLabel: string }) {
+export function MetricTooltip({ active, payload, metric, countLabel }: { active?: boolean; payload?: { payload: MetricsGroup }[]; metric: MetricKey; countLabel: string }) {
   const g = payload?.[0]?.payload
   if (!active || !g) return null
   return (

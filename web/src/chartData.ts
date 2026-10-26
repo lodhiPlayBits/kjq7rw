@@ -52,6 +52,12 @@ export function resolveSelection(points: SeriesPoint[], hoveredStart: string | n
   return hovered ? { point: hovered, hovered: true } : { point: worstPoint(points), hovered: false }
 }
 
+/** Start time of the hour under the cursor from a recharts mouse event, if it has a forecast. */
+export function hoveredStart(state: { activePayload?: { payload: ChartRow }[] } | null | undefined): string | null {
+  const point = state?.activePayload?.[0]?.payload.point
+  return point && point.forecast !== null ? point.start_time : null
+}
+
 /** Midnight ticks (ms) covering the rows, for day labels on the x axis. */
 export function dayTicks(rows: ChartRow[]): number[] {
   if (rows.length === 0) return []

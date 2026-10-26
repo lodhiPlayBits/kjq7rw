@@ -8,11 +8,13 @@ export default defineConfig({
     proxy: { '/api': 'http://localhost:8000' },
   },
   test: {
+    // Pure modules run in node; component tests opt into jsdom with `// @vitest-environment jsdom`.
     environment: 'node',
+    setupFiles: ['src/test/setup.ts'],
     coverage: {
       provider: 'v8',
       include: ['src/**/*.{ts,tsx}'],
-      exclude: ['src/**/*.test.ts', 'src/main.tsx', 'src/vite-env.d.ts'],
+      exclude: ['src/**/*.test.{ts,tsx}', 'src/test/**', 'src/main.tsx', 'src/vite-env.d.ts'],
       // lcov for SonarCloud, json-summary for the CI job summary, html as a downloadable artifact.
       reporter: ['text', 'lcov', 'json-summary', 'html'],
       // Gate the pure logic modules. React components have no render tests yet, so they are

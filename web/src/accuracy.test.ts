@@ -38,8 +38,9 @@ describe('calendarWeeks', () => {
     expect(weeks[0].slice(0, 3).map((c) => c?.group?.mae ?? null)).toEqual([1, null, 2])
   })
 
-  it('returns nothing for no groups', () => {
+  it('returns nothing for no groups or keys that are not dates', () => {
     expect(calendarWeeks([])).toEqual([])
+    expect(calendarWeeks([group(0, 1), group(11, 2)])).toEqual([])
   })
 })
 

@@ -12,7 +12,7 @@ import {
   YAxis,
 } from 'recharts'
 import type { SeriesPoint } from '../api'
-import { type ChartRow, dayTicks } from '../chartData'
+import { type ChartRow, dayTicks, hoveredStart } from '../chartData'
 import { fmtDay, fmtGW, fmtHours, fmtMW, fmtSignedMW, fmtWhen, roundTicks } from '../format'
 
 interface Props {
@@ -25,7 +25,7 @@ interface Props {
 
 const COLORS = { actual: '#0F1B2D', forecast: '#00A3A3', over: '#E5484D', under: '#3E7BFA', grid: '#EDF0F4', muted: '#5B6B80' }
 
-function TooltipBody({ active, payload }: { active?: boolean; payload?: { payload: ChartRow }[] }) {
+export function TooltipBody({ active, payload }: { active?: boolean; payload?: { payload: ChartRow }[] }) {
   const row = payload?.[0]?.payload
   if (!active || !row) return null
   const p = row.point
@@ -59,8 +59,8 @@ export function ForecastChart({ rows, horizon, selected, onHover }: Props) {
   const errLimit = Math.max(1000, Math.ceil(Math.max(0, ...rows.map((r) => Math.abs(r.error ?? 0))) / 1000) * 1000)
   const selectedT = selected ? Date.parse(selected.start_time) : null
   const handleMove = (state: { activePayload?: { payload: ChartRow }[] }) => {
-    const point = state?.activePayload?.[0]?.payload.point
-    if (point && point.forecast !== null) onHover(point.start_time)
+    const start = hoveredStart(state)
+    if (start) onHover(start)
   }
 
   return (
